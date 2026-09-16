@@ -1,0 +1,303 @@
+#include "hl/om/InfoClient.h"
+
+#include "json/Json.h"
+
+namespace hl {
+
+namespace {
+
+constexpr std::string_view kInfoPath = "/info";
+
+Side parseSide(std::string_view s) noexcept { return !s.empty() && s[0] == 'B' ? Side::Buy : Side::Sell; }
+
+OpenOrder parseOrder(const json::Value& v) {
+    OpenOrder o;
+    o.coin = std::string{v.field("coin").asString()};
+    o.side = parseSide(v.field("side").asString());
+    o.limitPx = v.field("limitPx").asDecimal();
+    o.sz = v.field("sz").asDecimal();
+    o.origSz = v.field("origSz").asDecimal();
+    o.oid = v.field("oid").asUint();
+    o.timestampMs = v.field("timestamp").asInt();
+    if (v.field("cloid").isString()) {
+        o.cloid = Cloid::parse(v.field("cloid").asString());
+    }
+    o.reduceOnly = v.field("reduceOnly").asBool();
+    o.isTrigger = v.field("isTrigger").asBool();
+    o.triggerPx = v.field("triggerPx").asDecimal();
+    o.orderType = std::string{v.field("orderType").asString()};
+    o.tif = std::string{v.field("tif").asString()};
+    return o;
+}
+
+Fill parseFill(const json::Value& v) {
+    Fill f;
+    f.coin = std::string{v.field("coin").asString()};
+    f.side = parseSide(v.field("side").asString());
+    f.px = v.field("px").asDecimal();
+    f.sz = v.field("sz").asDecimal();
+    f.timeMs = v.field("time").asInt();
+    f.oid = v.field("oid").asUint();
+    f.tid = v.field("tid").asUint();
+    if (v.field("cloid").isString()) {
+        f.cloid = Cloid::parse(v.field("cloid").asString());
+    }
+    f.crossed = v.field("crossed").asBool();
+    f.fee = v.field("fee").asDecimal();
+    f.feeToken = std::string{v.field("feeToken").asString()};
+    f.closedPnl = v.field("closedPnl").asDecimal();
+    f.startPosition = v.field("startPosition").asDecimal();
+    f.dir = std::string{v.field("dir").asString()};
+    f.hash = std::string{v.field("hash").asString()};
+    return f;
+}
+
+void readLevels(const json::Value& arr, std::vector<BookLevel>& out) {
+    for (auto lvl : arr.array()) {
+        out.push_back(BookLevel{lvl.field("px").asDecimal(), lvl.field("sz").asDecimal(),
+                                static_cast<std::uint32_t>(lvl.field("n").asUint())});
+    }
+}
+
+// Issue an info request and hand the parsed document to `parse`, which returns Result<T>.
+template <typename T, typename Parse>
+void request(HttpClient& http, std::string body, std::function<void(const Result<T>&)> callback, Parse parse) {
+    http.postJson(kInfoPath, std::move(body),
+                  [callback = std::move(callback), parse = std::move(parse)](const Error& err, const HttpResponse& resp) {
+                      if (err) {
+                          Error e = err;
+                          if (!resp.body.empty()) {
+                              e.message += ": " + resp.body.substr(0, 300);
+                          }
+                          callback(Result<T>{e});
+                          return;
+                      }
+                      json::Document doc;
+                      if (!doc.parse(resp.body)) {
+                          callback(Result<T>{Error{Error::Kind::Parse, resp.status,
+                                                   "info: invalid JSON: " + resp.body.substr(0, 300)}});
+                          return;
+                      }
+                      callback(parse(doc.root()));
+                  });
+}
+
+std::string userRequest(std::string_view type, const Address& user) {
+    return std::string{R"({"type":")"} + std::string{type} + R"(","user":")" + toHex(user) + R"("})";
+}
+
+}  // namespace
+
+Fill Fill::from(const FillMsg& m) {
+    Fill f;
+    f.coin = std::string{m.coin};
+    f.side = m.side;
+    f.px = m.px;
+    f.sz = m.sz;
+    f.timeMs = m.timeMs;
+    f.oid = m.oid;
+    f.tid = m.tid;
+    f.cloid = m.cloid;
+    f.crossed = m.crossed;
+    f.fee = m.fee;
+    f.feeToken = std::string{m.feeToken};
+    f.closedPnl = m.closedPnl;
+    f.startPosition = m.startPosition;
+    f.dir = std::string{m.dir};
+    f.hash = std::string{m.hash};
+    return f;
+}
+
+InfoClient::InfoClient(EventLoop& loop, Network network, HttpClientOptions options)
+    : http_(loop, std::string{restUrl(network)}, std::move(options)) {}
+
+InfoClient::InfoClient(EventLoop& loop, std::string baseUrl, HttpClientOptions options)
+    : http_(loop, std::move(baseUrl), std::move(options)) {}
+
+void InfoClient::assets(bool includeSpot, Callback<AssetRegistry> callback) {
+    http_.postJson(kInfoPath, R"({"type":"meta"})",
+                   [this, includeSpot, callback = std::move(callback)](const Error& err, const HttpResponse& resp) {
+                       if (err) {
+                           callback(Result<AssetRegistry>{err});
+                           return;
+                       }
+                       AssetRegistry registry;
+                       if (auto r = registry.loadPerpMeta(resp.body); !r) {
+                           callback(Result<AssetRegistry>{r.error()});
+                           return;
+                       }
+                       if (!includeSpot) {
+                           callback(Result<AssetRegistry>{std::move(registry)});
+                           return;
+                       }
+                       http_.postJson(kInfoPath, R"({"type":"spotMeta"})",
+                                      [registry = std::move(registry), callback](const Error& e2,
+                                                                                const HttpResponse& r2) mutable {
+                                          if (e2) {
+                                              callback(Result<AssetRegistry>{e2});
+                                              return;
+                                          }
+                                          if (auto r = registry.loadSpotMeta(r2.body); !r) {
+                                              callback(Result<AssetRegistry>{r.error()});
+                                              return;
+                                          }
+                                          callback(Result<AssetRegistry>{std::move(registry)});
+                                      });
+                   });
+}
+
+void InfoClient::clearinghouseState(const Address& user, Callback<AccountState> callback) {
+    request<AccountState>(http_, userRequest("clearinghouseState", user), std::move(callback),
+                          [](const json::Value& root) -> Result<AccountState> {
+                              if (!root.isObject()) {
+                                  return Error{Error::Kind::Parse, 0, "clearinghouseState: unexpected response"};
+                              }
+                              AccountState s;
+                              const auto summary = root.field("marginSummary");
+                              s.accountValue = summary.field("accountValue").asDecimal();
+                              s.totalNtlPos = summary.field("totalNtlPos").asDecimal();
+                              s.totalRawUsd = summary.field("totalRawUsd").asDecimal();
+                              s.totalMarginUsed = summary.field("totalMarginUsed").asDecimal();
+                              s.withdrawable = root.field("withdrawable").asDecimal();
+                              s.timeMs = root.field("time").asInt();
+                              for (auto ap : root.field("assetPositions").array()) {
+                                  const auto p = ap.field("position");
+                                  Position pos;
+                                  pos.coin = std::string{p.field("coin").asString()};
+                                  pos.szi = p.field("szi").asDecimal();
+                                  pos.entryPx = p.field("entryPx").asDecimal();
+                                  pos.positionValue = p.field("positionValue").asDecimal();
+                                  pos.unrealizedPnl = p.field("unrealizedPnl").asDecimal();
+                                  pos.returnOnEquity = p.field("returnOnEquity").asDecimal();
+                                  if (p.field("liquidationPx").isString()) {
+                                      pos.liquidationPx = p.field("liquidationPx").asDecimal();
+                                  }
+                                  pos.marginUsed = p.field("marginUsed").asDecimal();
+                                  const auto lev = p.field("leverage");
+                                  pos.leverage = static_cast<std::uint32_t>(lev.field("value").asUint());
+                                  pos.isCross = lev.field("type").asString() != "isolated";
+                                  s.positions.push_back(std::move(pos));
+                              }
+                              return s;
+                          });
+}
+
+void InfoClient::openOrders(const Address& user, Callback<std::vector<OpenOrder>> callback) {
+    request<std::vector<OpenOrder>>(http_, userRequest("frontendOpenOrders", user), std::move(callback),
+                                    [](const json::Value& root) -> Result<std::vector<OpenOrder>> {
+                                        if (!root.isArray()) {
+                                            return Error{Error::Kind::Parse, 0, "openOrders: expected array"};
+                                        }
+                                        std::vector<OpenOrder> out;
+                                        for (auto o : root.array()) {
+                                            out.push_back(parseOrder(o));
+                                        }
+                                        return out;
+                                    });
+}
+
+namespace {
+
+Result<OrderStatusInfo> parseOrderStatus(const json::Value& root) {
+    OrderStatusInfo info;
+    const auto status = root.field("status").asString();
+    if (status != "order") {
+        info.found = false;
+        info.statusText = std::string{status};
+        return info;
+    }
+    const auto wrapper = root.field("order");
+    info.found = true;
+    info.order = parseOrder(wrapper.field("order"));
+    info.statusText = std::string{wrapper.field("status").asString()};
+    info.status = parseOrderUpdateStatus(info.statusText);
+    info.statusTimestampMs = wrapper.field("statusTimestamp").asInt();
+    return info;
+}
+
+}  // namespace
+
+void InfoClient::orderStatus(const Address& user, const Cloid& cloid, Callback<OrderStatusInfo> callback) {
+    std::string body = R"({"type":"orderStatus","user":")" + toHex(user) + R"(","oid":")" + cloid.toString() + R"("})";
+    request<OrderStatusInfo>(http_, std::move(body), std::move(callback), parseOrderStatus);
+}
+
+void InfoClient::orderStatus(const Address& user, std::uint64_t oid, Callback<OrderStatusInfo> callback) {
+    std::string body = R"({"type":"orderStatus","user":")" + toHex(user) + R"(","oid":)" + std::to_string(oid) + "}";
+    request<OrderStatusInfo>(http_, std::move(body), std::move(callback), parseOrderStatus);
+}
+
+void InfoClient::userFills(const Address& user, Callback<std::vector<Fill>> callback) {
+    request<std::vector<Fill>>(http_, userRequest("userFills", user), std::move(callback),
+                               [](const json::Value& root) -> Result<std::vector<Fill>> {
+                                   if (!root.isArray()) {
+                                       return Error{Error::Kind::Parse, 0, "userFills: expected array"};
+                                   }
+                                   std::vector<Fill> out;
+                                   for (auto f : root.array()) {
+                                       out.push_back(parseFill(f));
+                                   }
+                                   return out;
+                               });
+}
+
+void InfoClient::l2Book(std::string_view coin, Callback<L2Snapshot> callback) {
+    std::string body = R"({"type":"l2Book","coin":")" + std::string{coin} + R"("})";
+    request<L2Snapshot>(http_, std::move(body), std::move(callback), [](const json::Value& root) -> Result<L2Snapshot> {
+        const auto levels = root.field("levels");
+        if (!levels.isArray()) {
+            return Error{Error::Kind::Parse, 0, "l2Book: missing levels"};
+        }
+        L2Snapshot snap;
+        snap.coin = std::string{root.field("coin").asString()};
+        snap.timeMs = root.field("time").asInt();
+        std::size_t side = 0;
+        for (auto lv : levels.array()) {
+            readLevels(lv, side == 0 ? snap.bids : snap.asks);
+            if (++side == 2) {
+                break;
+            }
+        }
+        return snap;
+    });
+}
+
+void InfoClient::allMids(Callback<std::vector<std::pair<std::string, Decimal>>> callback) {
+    using Mids = std::vector<std::pair<std::string, Decimal>>;
+    http_.postJson(kInfoPath, R"({"type":"allMids"})",
+                   [callback = std::move(callback)](const Error& err, const HttpResponse& resp) {
+                       if (err) {
+                           callback(Result<Mids>{err});
+                           return;
+                       }
+                       simdjson::dom::parser parser;
+                       simdjson::dom::object obj;
+                       if (parser.parse(resp.body).get_object().get(obj) != simdjson::SUCCESS) {
+                           callback(Result<Mids>{Error{Error::Kind::Parse, 0, "allMids: expected object"}});
+                           return;
+                       }
+                       Mids mids;
+                       for (auto [key, value] : obj) {
+                           std::string_view text;
+                           if (value.get_string().get(text) == simdjson::SUCCESS) {
+                               mids.emplace_back(std::string{key}, Decimal::parseOrZero(text));
+                           }
+                       }
+                       callback(Result<Mids>{std::move(mids)});
+                   });
+}
+
+void InfoClient::raw(std::string requestJson, Callback<std::string> callback) {
+    http_.postJson(kInfoPath, std::move(requestJson),
+                   [callback = std::move(callback)](const Error& err, const HttpResponse& resp) {
+                       if (err) {
+                           Error e = err;
+                           e.message += ": " + resp.body.substr(0, 300);
+                           callback(Result<std::string>{e});
+                           return;
+                       }
+                       callback(Result<std::string>{resp.body});
+                   });
+}
+
+}  // namespace hl

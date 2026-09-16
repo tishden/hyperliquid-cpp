@@ -1,0 +1,17 @@
+PROJECT_NAME           = "hyperliquid-cpp"
+PROJECT_NUMBER         = 1.0.0
+PROJECT_BRIEF          = "Low-latency C++20 connector for Hyperliquid"
+OUTPUT_DIRECTORY       = build/docs
+INPUT                  = include/hl README.md docs
+FILE_PATTERNS          = *.h *.md
+RECURSIVE              = YES
+USE_MDFILE_AS_MAINPAGE = README.md
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = NO
+HIDE_UNDOC_MEMBERS     = NO
+GENERATE_LATEX         = NO
+GENERATE_HTML          = YES
+JAVADOC_AUTOBRIEF      = YES
+MARKDOWN_SUPPORT       = YES
+QUIET                  = YES
+WARN_IF_UNDOCUMENTED   = NO

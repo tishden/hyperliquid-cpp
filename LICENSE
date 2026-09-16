@@ -1,0 +1,35 @@
+hyperliquid-cpp — Proprietary Software License
+Copyright (c) 2026 The hyperliquid-cpp authors. All rights reserved.
+
+This software and its documentation (the "Software") are proprietary and
+confidential. The Software is licensed, not sold.
+
+1. Grant. Subject to a separately executed license agreement or order form
+   (the "Agreement") and payment of the applicable fees, the licensee named in
+   the Agreement receives a non-exclusive, non-transferable right to use,
+   modify and compile the Software for its internal business purposes and to
+   distribute the Software only in compiled object form as part of the
+   licensee's own products, as further limited by the Agreement.
+
+2. Restrictions. Except as expressly permitted by the Agreement, the licensee
+   shall not (a) distribute, sublicense, rent, lease or publish the Software in
+   source form; (b) remove proprietary notices; (c) use the Software to build a
+   competing connector product.
+
+3. Third-party components. The Software depends on third-party components
+   licensed under their own terms, listed in THIRD_PARTY_NOTICES.md. Nothing in
+   this license restricts rights granted by those licenses.
+
+4. No warranty. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+   EXPRESS OR IMPLIED, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR
+   PURPOSE AND NON-INFRINGEMENT. TRADING DIGITAL ASSETS INVOLVES SUBSTANTIAL
+   RISK OF LOSS; THE LICENSOR IS NOT LIABLE FOR TRADING LOSSES, MISSED OR
+   ERRONEOUS ORDERS, OR ANY DAMAGES ARISING FROM USE OF THE SOFTWARE.
+
+5. Limitation of liability. IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY
+   INDIRECT, INCIDENTAL, SPECIAL OR CONSEQUENTIAL DAMAGES, OR FOR AMOUNTS
+   EXCEEDING THE FEES PAID UNDER THE AGREEMENT IN THE TWELVE MONTHS PRECEDING
+   THE CLAIM.
+
+If no Agreement is in place, no rights are granted beyond evaluation of the
+Software for thirty (30) days on non-production systems.
