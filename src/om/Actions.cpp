@@ -19,9 +19,19 @@ void appendUint(std::string& s, std::uint64_t v) {
 void appendBool(std::string& s, bool b) { s.append(b ? "true" : "false"); }
 
 void packDecimal(MsgPackWriter& w, Decimal d) {
-    std::string tmp;
-    d.appendTo(tmp);
-    w.str(tmp);
+    char buf[Decimal::kMaxChars];
+    w.str(std::string_view{buf, d.toChars(buf)});
+}
+
+constexpr char kHexDigits[] = "0123456789abcdef";
+
+void appendHex32(std::string& s, const Hash256& h) {
+    const std::size_t at = s.size();
+    s.resize(at + 64);
+    for (std::size_t i = 0; i < 32; ++i) {
+        s[at + 2 * i] = kHexDigits[h[i] >> 4];
+        s[at + 2 * i + 1] = kHexDigits[h[i] & 0x0F];
+    }
 }
 
 std::string_view tpslWire(TriggerSpec::Kind k) noexcept { return k == TriggerSpec::Kind::TakeProfit ? "tp" : "sl"; }
@@ -281,19 +291,17 @@ std::uint64_t NonceGenerator::next() noexcept {
     return candidate;
 }
 
-std::string RequestBuilder::payload(const EncodedAction& action, std::uint64_t nonce,
-                                    std::optional<std::uint64_t> expiresAfter) const {
+void RequestBuilder::appendPayload(std::string& body, const EncodedAction& action, std::uint64_t nonce,
+                                   std::optional<std::uint64_t> expiresAfter) const {
     const Signature sig = signer_.signL1Action(action.msgpack, vault_, nonce, expiresAfter, isMainnet_);
-    std::string body;
-    body.reserve(action.json.size() + 256);
     body += R"({"action":)";
     body += action.json;
     body += R"(,"nonce":)";
     appendUint(body, nonce);
     body += R"(,"signature":{"r":"0x)";
-    body += toHex(sig.r.data(), sig.r.size());
+    appendHex32(body, sig.r);
     body += R"(","s":"0x)";
-    body += toHex(sig.s.data(), sig.s.size());
+    appendHex32(body, sig.s);
     body += R"(","v":)";
     appendUint(body, sig.v);
     body += R"(},"vaultAddress":)";
@@ -309,7 +317,26 @@ std::string RequestBuilder::payload(const EncodedAction& action, std::uint64_t n
         appendUint(body, *expiresAfter);
     }
     body += '}';
+}
+
+std::string RequestBuilder::payload(const EncodedAction& action, std::uint64_t nonce,
+                                    std::optional<std::uint64_t> expiresAfter) const {
+    std::string body;
+    body.reserve(action.json.size() + 256);
+    appendPayload(body, action, nonce, expiresAfter);
     return body;
+}
+
+std::string RequestBuilder::wsPostAction(std::uint64_t requestId, const EncodedAction& action, std::uint64_t nonce,
+                                         std::optional<std::uint64_t> expiresAfter) const {
+    std::string frame;
+    frame.reserve(action.json.size() + 320);
+    frame += R"({"method":"post","id":)";
+    appendUint(frame, requestId);
+    frame += R"(,"request":{"type":"action","payload":)";
+    appendPayload(frame, action, nonce, expiresAfter);
+    frame += "}}";
+    return frame;
 }
 
 std::string RequestBuilder::wsPost(std::uint64_t requestId, std::string_view payloadJson) {

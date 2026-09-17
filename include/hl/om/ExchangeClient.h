@@ -46,6 +46,12 @@ struct ExchangeConfig {
     /// Trade on behalf of a vault or sub-account (0x…); empty = none.
     std::string vaultAddress{};
     ActionTransport transport{ActionTransport::WebSocket};
+    /**
+     * Precomputed-nonce ECDSA pool size (0 = off). When > 0 the Signer keeps this many nonces ready
+     * on an internal background thread, cutting signing from ~40 µs to ~0.2 µs per action
+     * (see Signer::enableNoncePool). Signatures are randomised instead of RFC 6979.
+     */
+    std::size_t precomputedNonces{0};
     /// Deadline for an action response before the order is reconciled via `orderStatus`.
     std::int64_t requestTimeoutMs{10'000};
     /// Also load spot assets (`spotMeta`) so spot pairs can be traded.
@@ -207,6 +213,8 @@ public:
         std::uint64_t reconciles{0};
     };
     [[nodiscard]] const Stats& stats() const noexcept { return stats_; }
+    /// Signature counters by path (precomputed nonce vs deterministic fallback).
+    [[nodiscard]] Signer::SigningStats signingStats() const noexcept { return signer_->signingStats(); }
 
 private:
     enum class ActionKind : std::uint8_t { Order, Cancel, Modify, Other };

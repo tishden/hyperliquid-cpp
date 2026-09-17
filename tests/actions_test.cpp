@@ -270,3 +270,21 @@ TEST(Cloid, ParseAndFormat) {
     EXPECT_FALSE(hl::Cloid::parse("0x0123456789abcdef001122334455667g"));
     EXPECT_EQ(hl::Cloid::fromU64(1).toString(), "0x00000000000000000000000000000001");
 }
+
+TEST(RequestBuilder, WsPostActionEqualsComposition) {
+    hl::Signer signer{kKey};
+    const auto vault = hl::parseAddress("0x1719884eb866cb12b2287399b15f7db5e7d775ea");
+    hl::RequestBuilder builder{signer, hl::Network::Testnet, vault};
+    const std::array<hl::OrderWire, 2> orders{btcAlo(), ethIocReduceOnly()};
+    const auto action = hl::actions::order(orders);
+    EXPECT_EQ(builder.wsPostAction(9, action, kNonce, 123), hl::RequestBuilder::wsPost(9, builder.payload(action, kNonce, 123)));
+    EXPECT_EQ(builder.wsPostAction(9, action, kNonce), hl::RequestBuilder::wsPost(9, builder.payload(action, kNonce)));
+}
+
+TEST(Decimal, ToCharsMatchesToString) {
+    for (std::string_view s : {"0", "1", "-1", "0.00000001", "-92233720368.54775808", "92233720368.54775807", "1670.1"}) {
+        const auto v = d(s);
+        char buf[hl::Decimal::kMaxChars];
+        EXPECT_EQ(std::string(buf, v.toChars(buf)), v.toString());
+    }
+}

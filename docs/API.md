@@ -1,6 +1,6 @@
 # hyperliquid-cpp — API Reference
 
-Version 1.0.0 · C++20 · Linux (epoll) · namespace `hl`
+Version 1.1.0 · C++20 · Linux (epoll) · namespace `hl`
 
 This document describes every public type and function of the library as declared under
 `include/hl/`. Behaviour notes describe what the implementation actually does; where the venue
@@ -122,6 +122,8 @@ The umbrella header `hl/hyperliquid.h` includes every header listed above.
   inside `EventLoop::run()` / `runOnce()`.
 - The only thread-safe entry points are `EventLoop::postThreadSafe()`, `EventLoop::stop()` and
   `EventLoop::stopped()`. To place an order from another thread, post a task (see [Recipe 8.6](#86-dedicated-pinned-loop-thread-orders-from-another-thread)).
+- The only thread the library ever starts is the optional nonce-pool refill thread (`Signer::enableNoncePool`,
+  `ExchangeConfig::precomputedNonces`); it touches nothing but the pool.
 - `Signer` signing methods are `const` and may be called concurrently; `NonceGenerator::next()` is lock-free and
   thread-safe; `setLogSink` / `setLogLevel` are atomic.
 - `WsMessageParser` is not thread-safe — one parser per thread.
@@ -198,6 +200,8 @@ Range ±92 233 720 368.54775807. All prices, sizes, notionals, fees and funding 
 | `constexpr bool isZero() const`, `constexpr bool isNegative() const` | |
 | `std::string toString() const` | Canonical wire form (below) |
 | `void appendTo(std::string& out) const` | Appends the wire form without a temporary |
+| `static constexpr std::size_t kMaxChars = 24` | Longest possible wire form |
+| `std::size_t toChars(char* out) const` | Writes the wire form into a caller buffer of at least `kMaxChars` bytes (no NUL); returns the length. Allocation-free. |
 | `operator-()` (unary), `operator+`, `operator-`, `operator+=`, `operator-=` | Plain mantissa arithmetic, no overflow check |
 | `Decimal mul(Decimal o) const` | Product via 128-bit intermediate, **truncated toward zero** to 8 decimals |
 | `Decimal div(Decimal o) const` | Quotient, truncated toward zero; **returns zero when `o` is zero** |
@@ -377,7 +381,7 @@ void logf(LogLevel level, const char* fmt, ...) noexcept;         // printf-styl
 fixed-point products.
 
 `#include "hl/Version.h"` — `hl::kVersionMajor` (1), `kVersionMinor` (0), `kVersionPatch` (0),
-`kVersionString` (`"1.0.0"`).
+`kVersionString` (`"1.1.0"`).
 
 ---
 
@@ -795,6 +799,7 @@ enum class ActionTransport : std::uint8_t { WebSocket, Http };
 | `accountAddress` | `std::string` | empty | Master account address. Required when `privateKey` belongs to an agent wallet; empty = signer's own address. |
 | `vaultAddress` | `std::string` | empty | Trade for a vault / sub-account. Included in every signature and payload; also used as the `user` for streams and info queries. |
 | `transport` | `ActionTransport` | `WebSocket` | See above |
+| `precomputedNonces` | `std::size_t` | `0` (off) | Size of the precomputed-nonce ECDSA pool kept full by an internal background thread ([§6.1](#61-signer-actionhash-agentdigest)). Cuts signing from ~40 µs to ~0.17 µs per action; signatures become randomised. Recommended: 256–1024 for active quoting. |
 | `requestTimeoutMs` | `std::int64_t` | `10000` | Deadline for a **WebSocket** post response. On expiry the action fails with `Timeout` and affected orders are reconciled. (HTTP actions use `http.requestTimeoutMs`.) |
 | `loadSpotAssets` | `bool` | `false` | Also load `spotMeta` so spot pairs can be traded |
 | `terminalOrderRetentionMs` | `std::int64_t` | `60000` | Filled / canceled / rejected orders are evicted this long after their last update |
@@ -1091,6 +1096,7 @@ validation and no order-table effect; the parsed response goes to `callback`.
 | `InfoClient& info()` | The client's info connection — reuse it for your own queries |
 | `Cloid nextCloid()` | `Cloid{sessionId, counter}`: a random 64-bit session id (never all-ones) and a counter starting at 1 |
 | `const Stats& stats() const` | Counters below |
+| `Signer::SigningStats signingStats() const` | Signatures by path: `precomputed` (nonce pool) / `deterministic` (RFC 6979) |
 
 | `Stats` field | Counts |
 |---|---|
@@ -1339,11 +1345,47 @@ digest          = keccak256( 0x19 ‖ 0x01 ‖ domainSeparator ‖ structHash )
 | `explicit Signer(std::string_view privateKeyHex)` | 64 hex digits, `0x` optional. Throws `std::invalid_argument` for malformed or out-of-range keys. The secp256k1 context is randomised for side-channel hardening. |
 | `~Signer()` | Wipes the key (`OPENSSL_cleanse`) |
 | `const Address& address() const` | `keccak256(uncompressed pubkey)[12..32]` |
-| `Signature signDigest(const Hash256& digest) const` | Recoverable ECDSA, RFC 6979 deterministic nonce, low-s; `v = 27 + recid` |
+| `Signature signDigest(const Hash256& digest) const` | Recoverable ECDSA, low-s, `v = 27 + recid`. Uses a precomputed nonce when the pool is enabled and non-empty, otherwise the RFC 6979 deterministic nonce. |
 | `Signature signL1Action(msgpackAction, vault, nonce, expiresAfter, isMainnet) const` | `signDigest(agentDigest(actionHash(…), isMainnet))` |
+| `void enableNoncePool(std::size_t capacity, bool backgroundThread = true)` | Enable precomputed-nonce signing (below). `capacity` is rounded up to a power of two; `0` disables. Throws `std::runtime_error` if a secp256k1 context cannot be created. |
+| `void disableNoncePool()` | Join the refill thread and wipe all precomputed nonces |
+| `std::size_t refillNonces(std::size_t maxCount)` | Produce up to `maxCount` nonces on the calling thread (~58 µs each); returns how many were added. `0` if the pool is disabled or full, or another refill is running. |
+| `std::size_t noncePoolSize() const` | Nonces ready now |
+| `SigningStats signingStats() const` | `{precomputed, deterministic}` — signatures produced by each path |
 
-Not copyable. Signing methods are `const` and thread-safe. Output is byte-identical to the official Python SDK
+Not copyable. Signing methods are `const` and thread-safe, with or without the pool. `enableNoncePool` /
+`disableNoncePool` must not race with signing. Without the pool, output is byte-identical to the official Python SDK
 (`sign_l1_action`).
+
+#### Precomputed-nonce signing
+
+ECDSA signing is `R = k·G; r = R.x; s = k⁻¹·(z + r·d) mod n`. The scalar multiplication `k·G` costs ~95 % of the
+~40 µs of a signature and does not depend on the message. With the pool enabled, entries `(r, k⁻¹, r·d, parity(R.y))`
+are computed ahead of time — by an internal background thread, or by `refillNonces` wherever you call it — and the
+signature itself becomes `s = k⁻¹·(z + r·d) mod n` plus low-s normalisation: **~0.17 µs**.
+
+| Property | Behaviour |
+|---|---|
+| Validity | Ordinary secp256k1 signatures: verified by the venue exactly like RFC 6979 ones (tested live on testnet) |
+| Determinism | Lost — signing the same action twice gives different `(r, s)`. Golden-vector comparisons require the pool to be disabled. |
+| Nonce uniqueness | Every entry is popped exactly once under a spin lock and wiped (`OPENSSL_cleanse`) immediately; concurrent signers never share one (tested with 4 threads under ThreadSanitizer) |
+| Nonce quality | `k = HMAC-SHA256(privateKey, 32 bytes CSPRNG ‖ counter) mod n`, rejected if 0 or ≥ n — unpredictable even if the system RNG is weak |
+| `fork()` | A child process never uses the parent's pool (a `pthread_atfork` generation counter disables it) — sharing nonces between processes would leak the key |
+| Empty pool | Falls back to RFC 6979 transparently; watch `signingStats().deterministic` |
+| Throughput | One refill thread produces ~17 000 nonces/s on the reference CPU; a pool of 256 absorbs bursts of 256 actions |
+| Memory | ~112 bytes per entry; secrets live only in the pool and the signing stack frame |
+
+```cpp
+hl::Signer signer{key};
+signer.enableNoncePool(1024);                 // background thread keeps 1024 nonces ready
+auto sig = signer.signDigest(digest);         // ~170 ns while the pool is non-empty
+
+hl::Signer manual{key};
+manual.enableNoncePool(256, /*backgroundThread=*/false);
+loop.addTimer(10, [&] { manual.refillNonces(16); });   // refill from your own idle hook
+```
+
+With `ExchangeClient`, set `ExchangeConfig::precomputedNonces` instead.
 
 **Use an API (agent) wallet.** Create it in the Hyperliquid UI (API page) and authorise it for your account: an
 agent can place and cancel orders but cannot withdraw, and can be revoked at any time. Configure the agent key as
@@ -1451,6 +1493,10 @@ public:
     RequestBuilder(const Signer& signer, Network network, std::optional<Address> vault = std::nullopt) noexcept;
     std::string payload(const EncodedAction& action, std::uint64_t nonce,
                         std::optional<std::uint64_t> expiresAfter = std::nullopt) const;
+    void appendPayload(std::string& out, const EncodedAction& action, std::uint64_t nonce,
+                       std::optional<std::uint64_t> expiresAfter = std::nullopt) const;
+    std::string wsPostAction(std::uint64_t requestId, const EncodedAction& action, std::uint64_t nonce,
+                             std::optional<std::uint64_t> expiresAfter = std::nullopt) const;
     static std::string wsPost(std::uint64_t requestId, std::string_view payloadJson);
     static std::string wsInfo(std::uint64_t requestId, std::string_view infoJson);
     bool isMainnet() const noexcept;
@@ -1470,6 +1516,10 @@ The `signer` must outlive the builder.
 
 With a vault, `"vaultAddress":"0x<lower-case>"`; with `expiresAfter`, `,"expiresAfter":<ms>` is appended (and
 included in the signed hash). `r` and `s` are always the full 64 hex digits.
+
+`appendPayload(out, …)` appends the same body to an existing string. `wsPostAction(id, action, nonce, expiresAfter)`
+signs and builds the complete WebSocket frame in a single allocation; it is byte-identical to
+`wsPost(id, payload(action, nonce, expiresAfter))` and is what `ExchangeClient` uses.
 
 `wsPost(id, payload)` → `{"method":"post","id":<id>,"request":{"type":"action","payload":<payload>}}`
 `wsInfo(id, info)` → `{"method":"post","id":<id>,"request":{"type":"info","payload":<info>}}`
@@ -1590,7 +1640,7 @@ error, peer close).
 |---|---|---|---|
 | `verifyPeer` | `bool` | `true` | Verify the certificate chain and host name |
 | `caFile` | `std::string` | empty | PEM bundle. Empty → OpenSSL default verify paths, which honour the `SSL_CERT_FILE` / `SSL_CERT_DIR` environment variables |
-| `connectTimeoutMs` | `std::int64_t` | `10000` | Limit for TCP connect + TLS handshake |
+| `connectTimeoutMs` | `std::int64_t` | `10000` | Limit for TCP connect + TLS handshake. With several resolved addresses the budget is split across them (≥ 1.5 s each). |
 | `tcpNoDelay` | `bool` | `true` | Disable Nagle |
 
 TLS 1.2 minimum, SNI and host-name verification enabled. If certificates cannot be loaded a Warn line is logged and
@@ -1610,7 +1660,7 @@ public:
 |---|---|
 | `enum class State { Idle, Connecting, Handshaking, Open, Closed }` | |
 | `TlsStream(EventLoop&, TlsStreamListener&, TlsOptions = {})` | |
-| `bool connect(const std::string& host, std::uint16_t port, bool secure)` | Resolves with blocking `getaddrinfo`, then non-blocking connect. `secure == false` → plain TCP. |
+| `bool connect(const std::string& host, std::uint16_t port, bool secure)` | Resolves with blocking `getaddrinfo`, then non-blocking connect. If an address refuses or times out, the next resolved address is tried; the starting address rotates on every `connect()`, so one unreachable edge IP (e.g. of a CDN) cannot stall reconnects. `onTlsClosed` fires only after all addresses failed. `secure == false` → plain TCP. |
 | `bool send(std::string_view bytes)` | Queue and flush when writable; `false` when idle/closed |
 | `void close()` | Immediate, no callback |
 | `State state() const`, `bool isOpen() const`, `std::size_t pendingBytes() const` | |

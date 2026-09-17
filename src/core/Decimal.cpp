@@ -2,6 +2,7 @@
 #include "hl/core/Int128.h"
 
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <ostream>
 
@@ -70,13 +71,13 @@ bool Decimal::parse(std::string_view text, Decimal& out) noexcept {
     return true;
 }
 
-void Decimal::appendTo(std::string& out) const {
+std::size_t Decimal::toChars(char* out) const noexcept {
     std::uint64_t magnitude = raw_ < 0 ? static_cast<std::uint64_t>(-(raw_ + 1)) + 1U : static_cast<std::uint64_t>(raw_);
     std::uint64_t intPart = magnitude / static_cast<std::uint64_t>(kScale);
     std::uint64_t fracPart = magnitude % static_cast<std::uint64_t>(kScale);
 
-    char buf[32];
-    int pos = sizeof(buf);
+    char buf[kMaxChars];
+    std::size_t pos = sizeof(buf);
     // Fractional digits, trailing zeros trimmed.
     if (fracPart != 0) {
         int width = kDecimals;
@@ -97,7 +98,14 @@ void Decimal::appendTo(std::string& out) const {
     if (raw_ < 0) {
         buf[--pos] = '-';
     }
-    out.append(buf + pos, static_cast<std::size_t>(sizeof(buf) - static_cast<std::size_t>(pos)));
+    const std::size_t len = sizeof(buf) - pos;
+    std::memcpy(out, buf + pos, len);
+    return len;
+}
+
+void Decimal::appendTo(std::string& out) const {
+    char buf[kMaxChars];
+    out.append(buf, toChars(buf));
 }
 
 std::string Decimal::toString() const {

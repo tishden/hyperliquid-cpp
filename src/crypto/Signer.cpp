@@ -1,12 +1,19 @@
 #include "hl/crypto/Signer.h"
 
 #include <openssl/crypto.h>
+#include <openssl/evp.h>
+#include <openssl/hmac.h>
 #include <openssl/rand.h>
+#include <pthread.h>
 #include <secp256k1.h>
 #include <secp256k1_recovery.h>
 
+#include <chrono>
 #include <stdexcept>
+#include <thread>
+#include <vector>
 
+#include "crypto/Scalar.h"
 #include "hl/core/Hex.h"
 
 namespace hl {
@@ -99,6 +106,212 @@ Hash256 agentDigest(const Hash256& connectionId, bool isMainnet) noexcept {
     return digest.finalize();
 }
 
+// ── precomputed nonce pool ──────────────────────────────────────────────────
+
+namespace {
+
+std::atomic<std::uint64_t> gForkGeneration{0};
+std::atomic<bool> gAtforkRegistered{false};
+
+void onForkChild() noexcept { gForkGeneration.fetch_add(1, std::memory_order_relaxed); }
+
+void registerAtfork() noexcept {
+    if (!gAtforkRegistered.exchange(true)) {
+        (void)::pthread_atfork(nullptr, nullptr, &onForkChild);
+    }
+}
+
+// One ready-to-use nonce: everything that depends on k and the key but not on the message.
+struct NonceEntry {
+    detail::Limbs r{};
+    detail::Limbs kInv{};
+    detail::Limbs rd{};  // r·d mod n
+    std::uint8_t recid{0};
+};
+
+}  // namespace
+
+struct Signer::NoncePool {
+    std::vector<NonceEntry> ring;
+    std::size_t mask{0};
+    std::uint64_t head{0};  // next entry to consume
+    std::uint64_t tail{0};  // next slot to fill
+    std::atomic_flag lock = ATOMIC_FLAG_INIT;
+    std::atomic<std::size_t> size{0};
+    std::atomic<bool> stop{false};
+    std::uint64_t forkGeneration{0};
+    std::uint64_t counter{0};  // producer-side
+    ::secp256k1_context_struct* ctx{nullptr};
+    const Hash256* key{nullptr};  // owned by the Signer, which outlives the pool
+    std::atomic_flag refilling = ATOMIC_FLAG_INIT;
+    std::thread thread;
+
+    std::size_t refill(std::size_t maxCount);
+
+    struct Guard {
+        std::atomic_flag& f;
+        explicit Guard(std::atomic_flag& flag) noexcept : f(flag) {
+            while (f.test_and_set(std::memory_order_acquire)) {
+            }
+        }
+        ~Guard() { f.clear(std::memory_order_release); }
+    };
+
+    ~NoncePool() {
+        stop.store(true);
+        if (thread.joinable()) {
+            thread.join();
+        }
+        OPENSSL_cleanse(ring.data(), ring.size() * sizeof(NonceEntry));
+        if (ctx != nullptr) {
+            secp256k1_context_destroy(ctx);
+        }
+    }
+
+    bool push(const NonceEntry& e) noexcept {
+        Guard g(lock);
+        if (tail - head > mask) {
+            return false;
+        }
+        ring[static_cast<std::size_t>(tail & mask)] = e;
+        ++tail;
+        size.store(static_cast<std::size_t>(tail - head), std::memory_order_relaxed);
+        return true;
+    }
+
+    bool pop(NonceEntry& out) noexcept {
+        if (size.load(std::memory_order_relaxed) == 0) {
+            return false;
+        }
+        Guard g(lock);
+        if (head == tail) {
+            return false;
+        }
+        NonceEntry& slot = ring[static_cast<std::size_t>(head & mask)];
+        out = slot;
+        OPENSSL_cleanse(&slot, sizeof(slot));
+        ++head;
+        size.store(static_cast<std::size_t>(tail - head), std::memory_order_relaxed);
+        return true;
+    }
+};
+
+namespace {
+
+// Produce one nonce entry; returns false in the (astronomically unlikely) rejection cases.
+bool produceNonce(::secp256k1_context_struct* ctx, const Hash256& key, const detail::Limbs& d, std::uint64_t counter,
+                  NonceEntry& out) {
+    std::uint8_t input[40];
+    if (RAND_bytes(input, 32) != 1) {
+        return false;
+    }
+    for (int i = 0; i < 8; ++i) {
+        input[32 + i] = static_cast<std::uint8_t>(counter >> (8 * i));
+    }
+    std::uint8_t kBytes[32];
+    unsigned int kLen = sizeof(kBytes);
+    const bool mac = HMAC(EVP_sha256(), key.data(), static_cast<int>(key.size()), input, sizeof(input), kBytes, &kLen) != nullptr;
+    OPENSSL_cleanse(input, sizeof(input));
+    detail::Limbs k = detail::fromBytes(kBytes);
+    bool ok = mac && !detail::isZero(k) && detail::lessThan(k, detail::kOrderN);
+    secp256k1_pubkey R;
+    if (ok) {
+        ok = secp256k1_ec_pubkey_create(ctx, &R, kBytes) == 1;
+    }
+    if (ok) {
+        std::uint8_t ser[65];
+        std::size_t len = sizeof(ser);
+        secp256k1_ec_pubkey_serialize(ctx, ser, &len, &R, SECP256K1_EC_UNCOMPRESSED);
+        const detail::Limbs x = detail::fromBytes(ser + 1);
+        // x ≥ n would need recovery ids 2/3, which Ethereum-style v cannot express: reject.
+        ok = detail::lessThan(x, detail::kOrderN);
+        if (ok) {
+            out.r = x;
+            out.recid = static_cast<std::uint8_t>(ser[64] & 1U);
+            out.kInv = detail::invMod(k);
+            out.rd = detail::mulMod(x, d);
+        }
+        OPENSSL_cleanse(ser, sizeof(ser));
+    }
+    OPENSSL_cleanse(kBytes, sizeof(kBytes));
+    OPENSSL_cleanse(k.data(), sizeof(k));
+    return ok;
+}
+
+}  // namespace
+
+std::size_t Signer::NoncePool::refill(std::size_t maxCount) {
+    // Producers are serialised: the counter and the secp256k1 context are not shared-safe.
+    if (refilling.test_and_set(std::memory_order_acquire)) {
+        return 0;
+    }
+    const detail::Limbs d = detail::fromBytes(key->data());
+    std::size_t added = 0;
+    while (added < maxCount && size.load(std::memory_order_relaxed) <= mask && !stop.load(std::memory_order_relaxed)) {
+        NonceEntry e;
+        if (!produceNonce(ctx, *key, d, counter++, e)) {
+            continue;
+        }
+        const bool pushed = push(e);
+        OPENSSL_cleanse(&e, sizeof(e));
+        if (!pushed) {
+            break;
+        }
+        ++added;
+    }
+    refilling.clear(std::memory_order_release);
+    return added;
+}
+
+void Signer::enableNoncePool(std::size_t capacity, bool backgroundThread) {
+    disableNoncePool();
+    if (capacity == 0) {
+        return;
+    }
+    registerAtfork();
+    std::size_t pow2 = 1;
+    while (pow2 < capacity) {
+        pow2 <<= 1;
+    }
+    auto pool = std::make_unique<NoncePool>();
+    pool->ring.assign(pow2, NonceEntry{});
+    pool->mask = pow2 - 1;
+    pool->forkGeneration = gForkGeneration.load();
+    pool->key = &key_;
+    pool->ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
+    if (pool->ctx == nullptr) {
+        throw std::runtime_error("hl::Signer: secp256k1_context_create failed");
+    }
+    std::uint8_t seed[32];
+    if (RAND_bytes(seed, sizeof(seed)) == 1 && secp256k1_context_randomize(pool->ctx, seed) != 1) {
+        // Hardening only; the pool stays correct without it.
+    }
+    OPENSSL_cleanse(seed, sizeof(seed));
+    if (backgroundThread) {
+        NoncePool* raw = pool.get();  // the thread is joined in ~NoncePool, before the pool memory goes away
+        pool->thread = std::thread([raw] {
+            while (!raw->stop.load(std::memory_order_relaxed)) {
+                if (raw->refill(64) == 0) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+            }
+        });
+    }
+    pool_ = std::move(pool);
+}
+
+void Signer::disableNoncePool() noexcept { pool_.reset(); }
+
+std::size_t Signer::refillNonces(std::size_t maxCount) { return pool_ ? pool_->refill(maxCount) : 0; }
+
+std::size_t Signer::noncePoolSize() const noexcept {
+    return pool_ ? pool_->size.load(std::memory_order_relaxed) : 0;
+}
+
+Signer::SigningStats Signer::signingStats() const noexcept {
+    return SigningStats{precomputedCount_.load(), deterministicCount_.load()};
+}
+
 Signer::Signer(std::string_view privateKeyHex) {
     if (!fromHex(privateKeyHex, key_.data(), key_.size())) {
         throw std::invalid_argument("hl::Signer: private key must be 32 bytes of hex");
@@ -133,6 +346,7 @@ Signer::Signer(std::string_view privateKeyHex) {
 }
 
 Signer::~Signer() {
+    pool_.reset();
     OPENSSL_cleanse(key_.data(), key_.size());
     if (ctx_ != nullptr) {
         secp256k1_context_destroy(ctx_);
@@ -140,6 +354,31 @@ Signer::~Signer() {
 }
 
 Signature Signer::signDigest(const Hash256& digest) const {
+    NonceEntry e;
+    if (pool_ && pool_->forkGeneration == gForkGeneration.load(std::memory_order_relaxed) && pool_->pop(e)) {
+        // Online step: s = k⁻¹ · (z + r·d) mod n, then low-s normalisation (flips the recovery id).
+        const detail::Limbs z = detail::reduce256(detail::fromBytes(digest.data()));
+        detail::Limbs sScalar = detail::mulMod(e.kInv, detail::addMod(z, e.rd));
+        if (!detail::isZero(sScalar)) {
+            detail::Limbs negated{};
+            detail::sub(detail::kOrderN, sScalar, negated);
+            const bool high = detail::lessThan(detail::kOrderHalf, sScalar);
+            const std::uint64_t pick = 0ULL - static_cast<std::uint64_t>(high);
+            for (std::size_t i = 0; i < 4; ++i) {
+                sScalar[i] = (negated[i] & pick) | (sScalar[i] & ~pick);
+            }
+            Signature out;
+            detail::toBytes(e.r, out.r.data());
+            detail::toBytes(sScalar, out.s.data());
+            out.v = static_cast<std::uint8_t>(27 + (e.recid ^ static_cast<std::uint8_t>(high)));
+            OPENSSL_cleanse(&e, sizeof(e));
+            OPENSSL_cleanse(sScalar.data(), sizeof(sScalar));
+            precomputedCount_.fetch_add(1, std::memory_order_relaxed);
+            return out;
+        }
+        OPENSSL_cleanse(&e, sizeof(e));
+    }
+    deterministicCount_.fetch_add(1, std::memory_order_relaxed);
     secp256k1_ecdsa_recoverable_signature sig;
     if (secp256k1_ecdsa_sign_recoverable(ctx_, &sig, digest.data(), key_.data(), nullptr, nullptr) != 1) {
         throw std::runtime_error("hl::Signer: signing failed");

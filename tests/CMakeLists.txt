@@ -20,13 +20,16 @@ set(HL_UNIT_TESTS
     event_loop_test
     exchange_client_test
     market_data_client_test
+    scalar_test
+    nonce_pool_test
 )
 
 add_executable(hl_tests)
 foreach(t ${HL_UNIT_TESTS})
     target_sources(hl_tests PRIVATE ${t}.cpp)
 endforeach()
-target_link_libraries(hl_tests PRIVATE hyperliquid hl_test_support GTest::gtest GTest::gtest_main)
+target_link_libraries(hl_tests PRIVATE hyperliquid hl_test_support hl_secp256k1 GTest::gtest GTest::gtest_main)
+target_include_directories(hl_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_compile_definitions(hl_tests PRIVATE HL_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 hl_target_defaults(hl_tests)
 gtest_discover_tests(hl_tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 120)

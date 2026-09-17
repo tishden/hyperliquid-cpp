@@ -66,6 +66,11 @@ public:
     /// Append the wire form to @p out without allocating a temporary.
     void appendTo(std::string& out) const;
 
+    /// Maximum length of the wire form (sign + 11 integer digits + '.' + 8 decimals).
+    static constexpr std::size_t kMaxChars = 24;
+    /// Write the wire form into @p out (at least kMaxChars bytes, not NUL-terminated); returns its length.
+    std::size_t toChars(char* out) const noexcept;
+
     constexpr Decimal operator-() const noexcept { return Decimal{-raw_}; }
     constexpr Decimal operator+(Decimal o) const noexcept { return Decimal{raw_ + o.raw_}; }
     constexpr Decimal operator-(Decimal o) const noexcept { return Decimal{raw_ - o.raw_}; }

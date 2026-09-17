@@ -67,7 +67,7 @@ void Order_EndToEnd_SignedPayload(benchmark::State& state) {
     const std::array<hl::OrderWire, 1> orders{order()};
     for (auto _ : state) {
         const auto action = hl::actions::order(orders);
-        benchmark::DoNotOptimize(hl::RequestBuilder::wsPost(1, builder.payload(action, nonces.next())));
+        benchmark::DoNotOptimize(builder.wsPostAction(1, action, nonces.next()));
     }
 }
 
@@ -91,3 +91,120 @@ BENCHMARK(Action_Hash_EIP712);
 BENCHMARK(Sign_EcdsaSecp256k1);
 BENCHMARK(Order_EndToEnd_SignedPayload);
 BENCHMARK(Cancel_EndToEnd_SignedPayload);
+
+namespace {
+
+// ── stage breakdown of order entry ──────────────────────────────────────────
+
+void Stage1_BuildAction(benchmark::State& state) {
+    const std::array<hl::OrderWire, 1> orders{order()};
+    for (auto _ : state) {
+        benchmark::DoNotOptimize(hl::actions::order(orders));
+    }
+}
+
+void Stage2_ActionHash(benchmark::State& state) {
+    const std::array<hl::OrderWire, 1> orders{order()};
+    const auto action = hl::actions::order(orders);
+    for (auto _ : state) {
+        benchmark::DoNotOptimize(hl::actionHash(action.msgpack, std::nullopt, 1700000000000ULL, std::nullopt));
+    }
+    state.counters["msgpack_bytes"] = static_cast<double>(action.msgpack.size());
+}
+
+void Stage3_AgentDigest(benchmark::State& state) {
+    const hl::Hash256 connId = hl::keccak256("connection");
+    for (auto _ : state) {
+        benchmark::DoNotOptimize(hl::agentDigest(connId, false));
+    }
+}
+
+void Stage4_Payload_NoSign(benchmark::State& state) {
+    hl::Signer signer{kKey};
+    hl::RequestBuilder builder{signer, hl::Network::Testnet};
+    const std::array<hl::OrderWire, 1> orders{order()};
+    const auto action = hl::actions::order(orders);
+    const auto payload = builder.payload(action, 1700000000000ULL);
+    for (auto _ : state) {
+        benchmark::DoNotOptimize(hl::RequestBuilder::wsPost(1, payload));
+    }
+    state.counters["frame_bytes"] = static_cast<double>(payload.size());
+}
+
+}  // namespace
+
+BENCHMARK(Stage1_BuildAction);
+BENCHMARK(Stage2_ActionHash);
+BENCHMARK(Stage3_AgentDigest);
+BENCHMARK(Stage4_Payload_NoSign);
+
+namespace {
+
+// ── precomputed-nonce path ──────────────────────────────────────────────────
+// The pool is refilled outside the timed region whenever it runs dry.
+
+constexpr std::size_t kPoolBatch = 4096;
+
+void ensurePool(benchmark::State& state, hl::Signer& signer) {
+    if (signer.noncePoolSize() == 0) {
+        state.PauseTiming();
+        signer.refillNonces(kPoolBatch);
+        state.ResumeTiming();
+    }
+}
+
+void Sign_PrecomputedNonce(benchmark::State& state) {
+    hl::Signer signer{kKey};
+    signer.enableNoncePool(kPoolBatch, false);
+    const hl::Hash256 digest = hl::keccak256("digest");
+    for (auto _ : state) {
+        ensurePool(state, signer);
+        benchmark::DoNotOptimize(signer.signDigest(digest));
+    }
+    state.counters["deterministic_fallbacks"] = static_cast<double>(signer.signingStats().deterministic);
+}
+
+void Order_EndToEnd_Precomputed(benchmark::State& state) {
+    hl::Signer signer{kKey};
+    signer.enableNoncePool(kPoolBatch, false);
+    hl::RequestBuilder builder{signer, hl::Network::Testnet};
+    hl::NonceGenerator nonces;
+    const std::array<hl::OrderWire, 1> orders{order()};
+    for (auto _ : state) {
+        ensurePool(state, signer);
+        const auto action = hl::actions::order(orders);
+        benchmark::DoNotOptimize(builder.wsPostAction(1, action, nonces.next()));
+    }
+    state.counters["deterministic_fallbacks"] = static_cast<double>(signer.signingStats().deterministic);
+}
+
+void Cancel_EndToEnd_Precomputed(benchmark::State& state) {
+    hl::Signer signer{kKey};
+    signer.enableNoncePool(kPoolBatch, false);
+    hl::RequestBuilder builder{signer, hl::Network::Testnet};
+    hl::NonceGenerator nonces;
+    const std::array<hl::CancelByCloidWire, 1> cancels{{{3, hl::Cloid{0x1234, 42}}}};
+    for (auto _ : state) {
+        ensurePool(state, signer);
+        const auto action = hl::actions::cancelByCloid(cancels);
+        benchmark::DoNotOptimize(builder.wsPostAction(1, action, nonces.next()));
+    }
+}
+
+void NoncePool_ProduceOne(benchmark::State& state) {
+    hl::Signer signer{kKey};
+    signer.enableNoncePool(1, false);
+    for (auto _ : state) {
+        signer.refillNonces(1);
+        state.PauseTiming();
+        (void)signer.signDigest(hl::Hash256{});  // drain
+        state.ResumeTiming();
+    }
+}
+
+}  // namespace
+
+BENCHMARK(Sign_PrecomputedNonce);
+BENCHMARK(Order_EndToEnd_Precomputed);
+BENCHMARK(Cancel_EndToEnd_Precomputed);
+BENCHMARK(NoncePool_ProduceOne);

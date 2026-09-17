@@ -23,8 +23,9 @@ method-by-method reference see [API.md](API.md).
    library spends complexity on robustness, not on micro-optimisation of the network stack.
 3. **Small surface, few dependencies.** One static library, three runtime dependencies (OpenSSL,
    libsecp256k1, simdjson — the latter two private and statically linked), no Boost, no Rust FFI.
-4. **Embeddable.** No hidden threads, no global state besides the log sink; the application owns the
-   event loop and decides where it runs.
+4. **Embeddable.** No hidden threads (the only optional one is the nonce-pool refill thread you enable
+   explicitly), no global state besides the log sink; the application owns the event loop and decides where it
+   runs.
 
 ## 2. Layers
 
@@ -101,6 +102,7 @@ never act on a book that silently stopped updating.
 ## 5. Order-management path
 
 ```
+(full algorithm: ORDER_MANAGEMENT.md)
 placeOrder(req) ─► validate (asset exists, px/sz valid per AssetInfo) ─► Order{PendingNew} in table
                ─► actions::order (msgpack + JSON from the same inputs)
                ─► RequestBuilder::payload: nonce, keccak(msgpack‖nonce‖vault), EIP-712, ECDSA
@@ -161,6 +163,7 @@ three sources (ack, `orderUpdates`, `userFills`) arrive in any order:
 
 | Failure | Handling |
 |---|---|
+| One unreachable address of a multi-address host (CDN edge) | `TlsStream` tries the next resolved address after a refusal or per-address timeout and rotates the starting address on every connect |
 | WS drop / server close | `WsSession` reconnects with exponential backoff (250 ms → 10 s, configurable), replays subscriptions; books cleared; `onDisconnected`/`onConnected` |
 | Half-open connection | application heartbeat `{"method":"ping"}` every 20 s; no inbound data for 60 s → forced reconnect |
 | Action sent over a WS that dies | pending posts fail with `Transport`, affected orders are reconciled |
@@ -192,6 +195,8 @@ decimals; sizes have `szDecimals` decimals.
   UI. `ExchangeConfig::accountAddress` names the master account it acts for.
 - The private key lives only inside `hl::Signer`; it is wiped with `OPENSSL_cleanse` on destruction and
   never logged. The libsecp256k1 context is randomised against side channels.
+- The optional precomputed-nonce pool keeps `k⁻¹` and `r·d` per entry in memory; entries are single-use, wiped on
+  use, hedged against weak RNGs and disabled after `fork()` ([SIGNING.md §9](SIGNING.md#9-fast-signing-with-precomputed-nonces)).
 - TLS peer verification and host-name checking are on by default (`TlsOptions::verifyPeer`); the CA
   bundle comes from the OpenSSL defaults (`SSL_CERT_FILE`/`SSL_CERT_DIR`) or `TlsOptions::caFile`.
 - The examples read keys from environment variables or a key file — never from command-line
@@ -207,5 +212,28 @@ decimals; sizes have `szDecimals` decimals.
 | Order book & rounding | overlay cases, capacity, VWAP, microprice; venue price/size rules | `tests/order_book_test.cpp`, `tests/asset_registry_test.cpp` |
 | End-to-end | `ExchangeClient` and `MarketDataClient` over real sockets against `MockVenue` (HTTP + WebSocket server): lifecycle, partial fills, duplicates, rejections, batches, cancel races, modify with oid change, timeouts, HTTP transport, disconnect/reconnect reconciliation, missed fills, external orders, agent wallets, heartbeats, stale detection | `tests/exchange_client_test.cpp`, `tests/market_data_client_test.cpp` |
 | Live | signing validated against the real testnet: the venue recovers exactly the signer address from our signatures over both WS `post` and HTTP | `hl_testnet_quoter`, see [TESTNET.md](TESTNET.md) |
+
+### Verification matrix (v1.1.0)
+
+| Build | Tests | Result |
+|---|---|---|
+| Clang 21, Release | 135 | all passed |
+| GCC 11.5 (system), Release | 135 | all passed |
+| GCC 15, Release | 135 | all passed |
+| Clang 21, AddressSanitizer + UBSan | 135 | all passed, no reports |
+| Clang 21, ThreadSanitizer (library tests; examples not built) | 129 | all passed, no reports |
+| Docker build stage (Ubuntu 24.04, GCC 13) | 135 | all passed |
+
+| Live check against Hyperliquid testnet | Result |
+|---|---|
+| Market data (`l2Book`, `bbo`, `trades`, `activeAssetCtx`) | books built, 0 parse errors |
+| Mainnet market-data replay parse | 758 frames, 0 parse errors |
+| Signed orders, RFC 6979, WebSocket `post` and HTTP | venue recovered exactly the local signer address |
+| Signed orders, precomputed nonces, WebSocket `post` and HTTP | venue recovered exactly the local signer address; 12/12 signatures via the pool, 0 fallbacks |
+| Connects after the multi-address fix | 4/4 successful |
+
+Live checks used unfunded random keys, so the venue rejected the orders with
+`User or API Wallet <signer> does not exist` — which proves the full encoding/hash/signature chain, but not
+fills. Fill handling is covered end-to-end by the mock-venue tests.
 
 All tests also run under AddressSanitizer + UndefinedBehaviorSanitizer (`scripts/test.sh asan`).

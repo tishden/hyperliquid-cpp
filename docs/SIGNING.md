@@ -14,6 +14,7 @@ Hyperliquid authenticates every trading action (`order`, `cancel`, `cancelByCloi
 - [6. Request body](#6-request-body)
 - [7. Worked example](#7-worked-example)
 - [8. Pitfalls](#8-pitfalls)
+- [9. Fast signing with precomputed nonces](#9-fast-signing-with-precomputed-nonces)
 
 ## 1. Pipeline
 
@@ -142,3 +143,46 @@ vault on testnet, `expiresAfter`) are in `tests/actions_test.cpp`.
 | Intermittent `Invalid nonce` | nonce reused across processes sharing one key, or wall clock far off |
 | Orders land on the wrong coin | hard-coded asset id; ids differ between networks and change when assets are listed |
 | `Order has invalid price` | more than 5 significant figures or too many decimals — use `AssetInfo::roundPx` |
+
+## 9. Fast signing with precomputed nonces
+
+The venue only verifies `(digest, r, s, v)`; it does not require RFC 6979. That allows splitting ECDSA into an
+expensive message-independent part done ahead of time and a cheap online part
+(`Signer::enableNoncePool`, `ExchangeConfig::precomputedNonces`).
+
+**Offline** (refill thread), for each pool entry:
+
+```
+k      = HMAC-SHA256(d, rand32 ‖ counter_le64)  interpreted big-endian; reject if k = 0 or k ≥ n
+R      = k·G                                    (libsecp256k1, constant time)
+reject if R.x ≥ n                               (would need v ∈ {29, 30}; probability ≈ 2⁻¹²⁷)
+store  r = R.x,  k⁻¹ mod n,  r·d mod n,  parity = R.y mod 2
+wipe   k
+```
+
+**Online** (`signDigest`), per signature:
+
+```
+z  = digest mod n
+s  = k⁻¹ · (z + r·d) mod n
+if s > n/2:  s = n − s,  parity ^= 1            (low-s, EIP-2)
+v  = 27 + parity
+wipe the entry
+```
+
+Correctness is the standard ECDSA identity `s·k = z + r·d`; the recovery id of `(r, s)` is the parity of `R.y`,
+flipped when `s` is negated (negating `s` corresponds to `−R`).
+
+| Risk | Mitigation |
+|---|---|
+| Nonce reuse leaks the private key (two signatures with the same `k`) | each entry is popped exactly once under a lock and wiped; concurrent signers are tested under ThreadSanitizer; a `pthread_atfork` generation counter disables the pool in child processes |
+| Predictable nonces leak the key | `k` is HMAC-keyed with the private key over CSPRNG output and a counter (hedged): unpredictable if either the RNG or the key is secret |
+| Biased nonces (lattice attacks) | rejection sampling of `k` in `[1, n)` — no modular reduction bias |
+| Timing side channels | `k·G` uses libsecp256k1's constant-time multiplication; the mod-n arithmetic has data-independent loops and masked conditional subtraction; the online step handles no `k` |
+| Memory disclosure | entries hold `k⁻¹` and `r·d` in process memory, the same exposure class as the private key itself; they are wiped on use and on `disableNoncePool` |
+
+Signatures from the pool are randomised: the same action signed twice yields different `(r, s)`, so golden-vector
+comparisons (tests, SDK cross-checks) must run with the pool disabled. Verification by the venue is unaffected —
+confirmed live on testnet over both WebSocket and HTTP (`signingStats().precomputed` > 0, venue recovered the
+signer address).
+

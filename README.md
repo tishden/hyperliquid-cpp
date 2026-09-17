@@ -16,24 +16,27 @@ order management and EIP-712 signing — in one dependency-light static library.
 | **Market data** | `l2Book`, `bbo`, `trades`, `activeAssetCtx`, `allMids`, raw channels · auto-reconnect with subscription replay · heartbeat + stale detection |
 | **Order book** | allocation-free, 64 levels/side · snapshot + best-bid/offer overlay · mid, microprice, spread, depth, VWAP |
 | **Order management** | place / batch / cancel / cancel-all / modify / scheduleCancel / updateLeverage · WebSocket `post` **or** HTTP · unified order state from acks + `orderUpdates` + `userFills` · positions · automatic reconciliation |
-| **Signing** | byte-identical to the official Python SDK (golden-vector tested) · agent (API) wallets · vaults / sub-accounts · `expiresAfter` |
+| **Signing** | byte-identical to the official Python SDK (golden-vector tested) · optional precomputed-nonce ECDSA: 0.17 µs per signature · agent (API) wallets · vaults / sub-accounts · `expiresAfter` |
 | **Venue rules** | asset ids resolved from `meta`/`spotMeta` · exact price (5 significant figures) and size rounding |
-| **Engineering** | exact fixed-point decimals (no floating point on the wire path) · single-threaded epoll reactor · 120 tests incl. end-to-end against a mock venue · ASan/UBSan clean · GCC 15 / Clang 21 · `-Werror` |
+| **Engineering** | exact fixed-point decimals (no floating point on the wire path) · single-threaded epoll reactor · 135 tests incl. end-to-end against a mock venue · ASan/UBSan/TSan clean · GCC 15 / Clang 21 · `-Werror` |
 
 ## Performance
 
-Measured on a desktop x86-64 (3.7 GHz), single core, Clang 21 `-O3` — full table and methodology in
+Measured on a 2012 Intel i7-3820, single core, Clang 21 `-O3` (current server cores are ~2× faster) — full table and methodology in
 [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 | Operation | Latency |
 |---|---|
-| Parse `bbo` frame → `BboMsg` | **402 ns** |
-| Parse `l2Book` (20×20 levels, 1.6 KB) | 5.2 µs |
-| Apply snapshot to `OrderBook` | **27 ns** |
-| Apply `bbo` overlay | 52 ns |
-| Replay of a real mainnet session | **490 MB/s · 1.56 M msg/s** |
-| Exact decimal parse (vs `strtod` 95 ns) | **18 ns** |
-| Build + sign an order (msgpack, EIP-712, ECDSA) → WS frame | 43 µs |
+| Parse `bbo` frame → `BboMsg` | **336 ns** |
+| Parse `l2Book` (20×20 levels, 1.6 KB) | 4.0 µs |
+| Apply snapshot to `OrderBook` | 52 ns |
+| Replay of a real mainnet session | **514 MB/s · 1.64 M msg/s** |
+| Exact decimal parse (vs `strtod` 101 ns) | **19 ns** |
+| Order → signed WebSocket frame (msgpack, Keccak, EIP-712, ECDSA) | 42 µs → **3.3 µs** with precomputed nonces |
+
+Verified: 135 tests on Clang 21 / GCC 11 / GCC 15, ASan+UBSan and ThreadSanitizer clean; signatures (deterministic and
+precomputed-nonce) accepted by the live testnet over WebSocket and HTTP — see
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#verification-matrix-v110).
 
 Hyperliquid's own latency floor is block time (~0.2 s), so the connector never is the bottleneck —
 it leaves the whole budget to your strategy.
@@ -46,7 +49,7 @@ simdjson are fetched and built statically).
 
 ```bash
 scripts/build.sh release           # or: cmake --preset release && cmake --build --preset release
-scripts/test.sh release            # 120 tests, ~2 s
+scripts/test.sh release            # 135 tests, ~3 s
 build/release/examples/hl_book_printer BTC ETH SOL
 build/release/examples/hl_testnet_quoter --dry-run --coin ETH
 ```
@@ -54,7 +57,7 @@ build/release/examples/hl_testnet_quoter --dry-run --coin ETH
 ### Docker
 
 ```bash
-docker build -t hyperliquid-cpp .                  # compiles, runs all tests, produces a 133 MB runtime image
+docker build -t hyperliquid-cpp .                  # compiles, runs all 135 tests, produces a ~133 MB runtime image
 docker run --rm hyperliquid-cpp hl_book_printer BTC ETH
 docker run --rm hyperliquid-cpp hl_testnet_quoter --dry-run --coin ETH
 docker run --rm -e HL_PRIVATE_KEY -e HL_ACCOUNT_ADDRESS hyperliquid-cpp hl_testnet_quoter --coin ETH --duration 600
@@ -142,8 +145,10 @@ Setting up a testnet account and API wallet: [docs/TESTNET.md](docs/TESTNET.md).
 | Document | Contents |
 |---|---|
 | [docs/API.md](docs/API.md) | Complete API reference: every class, method, field, callback, state transition and error |
+| [docs/RUNNING.md](docs/RUNNING.md) | Building, running natively and in Docker, credentials, low-latency deployment, systemd, monitoring, production checklist |
+| [docs/ORDER_MANAGEMENT.md](docs/ORDER_MANAGEMENT.md) | The order-management algorithm step by step: submission, correlation, merging acks/updates/fills, modify, reconciliation, reconnects, latency |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layers, threading, data flow, order state machine, reliability design |
-| [docs/SIGNING.md](docs/SIGNING.md) | Exact Hyperliquid L1-action signing specification with worked vectors |
+| [docs/SIGNING.md](docs/SIGNING.md) | Exact Hyperliquid L1-action signing specification with worked vectors; precomputed-nonce ECDSA |
 | [docs/TESTNET.md](docs/TESTNET.md) | Testnet account, API wallet, running and reading the demo |
 | [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Benchmark results and how to reproduce them |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
@@ -154,7 +159,7 @@ Doxygen HTML: `scripts/docs.sh`.
 
 ```cmake
 include(FetchContent)
-FetchContent_Declare(hyperliquid_cpp GIT_REPOSITORY <your-licensed-repo-url> GIT_TAG v1.0.0)
+FetchContent_Declare(hyperliquid_cpp GIT_REPOSITORY <your-licensed-repo-url> GIT_TAG v1.1.0)
 FetchContent_MakeAvailable(hyperliquid_cpp)      # or: add_subdirectory(third_party/hyperliquid-cpp)
 target_link_libraries(my_bot PRIVATE hyperliquid::hyperliquid)
 ```

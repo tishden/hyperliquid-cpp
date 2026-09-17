@@ -3,6 +3,27 @@
 All notable changes to this project are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## [1.1.0] — 2026-09-17
+
+### Added
+- **Precomputed-nonce ECDSA** (`Signer::enableNoncePool`, `refillNonces`, `noncePoolSize`, `signingStats`;
+  `ExchangeConfig::precomputedNonces`; quoter `--presign`): signing 38 µs → 0.17 µs, order entry 42 µs → 3.3 µs.
+  Single-use hedged nonces, fork protection, automatic RFC 6979 fallback.
+- Constant-time arithmetic modulo the secp256k1 order, cross-checked against OpenSSL BIGNUM.
+- `RequestBuilder::wsPostAction` / `appendPayload` (single-allocation signed frames), `Decimal::toChars`.
+- `ExchangeClient::signingStats()`; CMake option `HL_NATIVE`.
+- Documentation: `docs/RUNNING.md`, `docs/ORDER_MANAGEMENT.md`; precomputed-nonce section in `docs/SIGNING.md`;
+  benchmark breakdown of the order path.
+- Stage benchmarks for order entry; nonce-pool, scalar and address-fallback tests (135 tests; ThreadSanitizer clean).
+
+### Changed
+- Keccak-f[1600] unrolled: −33 % per hash (at parity with OpenSSL assembly).
+- WebSocket masking 8 bytes at a time: 565 ns → 59 ns for an order frame.
+
+### Fixed
+- `TlsStream` only tried the first resolved address; an unreachable CDN edge IP stalled connects and every
+  reconnect until timeout. It now falls through to the next address and rotates the starting address.
+
 ## [1.0.0] — 2026-09-16
 
 ### Added

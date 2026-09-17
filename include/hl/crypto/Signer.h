@@ -1,6 +1,8 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -44,7 +46,8 @@ struct Signature {
  * revoked from the HL UI. Signatures are deterministic (RFC 6979) and low-s
  * normalised, byte-identical to the official Python SDK.
  *
- * Thread-safety: `sign*` methods are const and may be called concurrently.
+ * Thread-safety: `sign*` methods are const and may be called concurrently (also with the nonce
+ * pool enabled). `enableNoncePool` / `disableNoncePool` must not race with signing.
  * The key is wiped from memory in the destructor.
  */
 class Signer {
@@ -70,10 +73,51 @@ public:
                                          const std::optional<Address>& vault, std::uint64_t nonce,
                                          const std::optional<std::uint64_t>& expiresAfter, bool isMainnet) const;
 
+    // ── precomputed-nonce ("offline/online") signing ────────────────────────
+
+    /**
+     * @brief Enable signing with precomputed nonces — cuts a signature from ~40 µs to well under 1 µs.
+     *
+     * ECDSA cost is dominated by the scalar multiplication R = k·G. With the pool enabled that work
+     * is done ahead of time: each pool entry holds (r, k⁻¹, r·d) for a fresh secret nonce k, and
+     * signing reduces to `s = k⁻¹·(z + r·d) mod n` plus low-s normalisation. Signatures are ordinary
+     * valid secp256k1 signatures, but randomised (not RFC 6979) — every signature is different.
+     *
+     * Safety properties:
+     *  - each entry is handed out exactly once (spin-locked pop) and wiped immediately;
+     *  - k = HMAC-SHA256(privateKey, CSPRNG output ‖ counter) mod n, so a weak system RNG alone
+     *    cannot make nonces predictable;
+     *  - the pool is discarded in a `fork()`ed child, which would otherwise reuse parent nonces;
+     *  - when the pool is empty signing silently falls back to the deterministic path.
+     *
+     * @param capacity          number of ready nonces to keep (memory: ~112 bytes each)
+     * @param backgroundThread  start an internal thread that keeps the pool full (~33 000 nonces/s
+     *                          per core); pass false and call refillNonces() yourself otherwise
+     */
+    void enableNoncePool(std::size_t capacity, bool backgroundThread = true);
+    /// Stop the refill thread and wipe all precomputed nonces.
+    void disableNoncePool() noexcept;
+    /// Compute up to @p maxCount nonces on the calling thread (bounded by free capacity). Returns the number added.
+    std::size_t refillNonces(std::size_t maxCount);
+    /// Nonces currently ready (0 when the pool is disabled).
+    [[nodiscard]] std::size_t noncePoolSize() const noexcept;
+
+    /// Signature counters by path.
+    struct SigningStats {
+        std::uint64_t precomputed{0};    ///< signed with a pooled nonce
+        std::uint64_t deterministic{0};  ///< signed with RFC 6979 (pool disabled or empty)
+    };
+    [[nodiscard]] SigningStats signingStats() const noexcept;
+
 private:
+    struct NoncePool;
+
     Hash256 key_{};
     Address address_{};
     ::secp256k1_context_struct* ctx_{nullptr};
+    std::unique_ptr<NoncePool> pool_;
+    mutable std::atomic<std::uint64_t> precomputedCount_{0};
+    mutable std::atomic<std::uint64_t> deterministicCount_{0};
 };
 
 }  // namespace hl

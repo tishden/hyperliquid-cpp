@@ -40,6 +40,7 @@ void usage() {
         "  --requote-bps N          amend when target moves this far (default 3)\n"
         "  --duration SEC           stop after SEC seconds (default: run until Ctrl-C)\n"
         "  --transport ws|http      action transport (default ws)\n"
+        "  --presign N              precomputed ECDSA nonces kept ready (default 256, 0 = RFC 6979 only)\n"
         "  --dead-man-switch        maintain scheduleCancel(now+90s)\n"
         "  --dry-run                no orders; print computed quotes (no key required)\n"
         "  --key-file PATH          file with HL_PRIVATE_KEY=/HL_ACCOUNT_ADDRESS=/HL_VAULT_ADDRESS= lines\n"
@@ -88,6 +89,7 @@ int main(int argc, char** argv) {
     bool mainnet = false;
     bool mainnetAck = false;
     bool httpTransport = false;
+    std::size_t presign = 256;
     std::string key = env("HL_PRIVATE_KEY");
     std::string account = env("HL_ACCOUNT_ADDRESS");
     std::string vault = env("HL_VAULT_ADDRESS");
@@ -117,6 +119,8 @@ int main(int argc, char** argv) {
             durationSec = std::stoll(next());
         } else if (a == "--transport") {
             httpTransport = next() == "http";
+        } else if (a == "--presign") {
+            presign = static_cast<std::size_t>(std::stoull(next()));
         } else if (a == "--dead-man-switch") {
             settings.deadManSwitch = true;
         } else if (a == "--dry-run") {
@@ -188,6 +192,7 @@ int main(int argc, char** argv) {
         cfg.accountAddress = account;
         cfg.vaultAddress = vault;
         cfg.transport = httpTransport ? hl::ActionTransport::Http : hl::ActionTransport::WebSocket;
+        cfg.precomputedNonces = presign;
         try {
             exchange = std::make_unique<hl::ExchangeClient>(loop, quoter, cfg);
         } catch (const std::exception& e) {

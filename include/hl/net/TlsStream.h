@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -18,7 +19,9 @@ struct TlsOptions {
     bool verifyPeer{true};
     /// PEM CA bundle path. Empty = OpenSSL default paths (honours `SSL_CERT_FILE` / `SSL_CERT_DIR`).
     std::string caFile{};
-    /// Abort a connect (TCP + TLS handshake) that takes longer than this.
+    /// Abort a connect (TCP + TLS handshake) that takes longer than this. When a host resolves to
+    /// several addresses, the budget is split across them (at least 1.5 s each) and the next address
+    /// is tried after a refusal or timeout.
     std::int64_t connectTimeoutMs{10'000};
     /// Set TCP_NODELAY (disable Nagle) — on by default for request/response latency.
     bool tcpNoDelay{true};
@@ -70,6 +73,9 @@ public:
 
 private:
     void onIoEvent(std::uint32_t events) override;
+    bool startAttempt(std::string reason);
+    void nextAddress(std::string_view reason);
+    void closeSocket() noexcept;
     void onConnectReady();
     void doHandshake();
     void doRead();
@@ -89,6 +95,13 @@ private:
     ::ssl_st* ssl_{nullptr};
     State state_{State::Idle};
     std::string host_;
+    std::uint16_t port_{0};
+    std::vector<std::array<char, 128>> addrs_;  // resolved sockaddr_storage blobs
+    std::vector<std::uint32_t> addrLens_;
+    std::vector<int> addrFamilies_;
+    std::size_t addrCursor_{0};
+    std::size_t attemptsLeft_{0};
+    std::size_t rotation_{0};
     std::vector<char> outbox_;
     std::size_t outboxOffset_{0};
     std::vector<char> readBuf_;

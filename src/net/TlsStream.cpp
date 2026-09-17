@@ -10,6 +10,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
@@ -71,6 +72,7 @@ TlsStream::~TlsStream() {
 bool TlsStream::connect(const std::string& host, std::uint16_t port, bool secure) {
     release();
     host_ = host;
+    port_ = port;
     secure_ = secure;
     outbox_.clear();
     outboxOffset_ = 0;
@@ -85,39 +87,93 @@ bool TlsStream::connect(const std::string& host, std::uint16_t port, bool secure
         state_ = State::Closed;
         return false;
     }
-    int fd = -1;
+    addrs_.clear();
+    addrLens_.clear();
+    addrFamilies_.clear();
     for (addrinfo* ai = result; ai != nullptr; ai = ai->ai_next) {
-        fd = ::socket(ai->ai_family, ai->ai_socktype | SOCK_NONBLOCK | SOCK_CLOEXEC, ai->ai_protocol);
+        if (ai->ai_addrlen > sizeof(std::array<char, 128>)) {
+            continue;
+        }
+        std::array<char, 128> blob{};
+        std::memcpy(blob.data(), ai->ai_addr, ai->ai_addrlen);
+        addrs_.push_back(blob);
+        addrLens_.push_back(static_cast<std::uint32_t>(ai->ai_addrlen));
+        addrFamilies_.push_back(ai->ai_family);
+    }
+    ::freeaddrinfo(result);
+    if (addrs_.empty()) {
+        state_ = State::Closed;
+        return false;
+    }
+    // Rotate the first address across connects so one bad edge address cannot stall every reconnect.
+    addrCursor_ = rotation_++ % addrs_.size();
+    attemptsLeft_ = addrs_.size();
+    return startAttempt({});
+}
+
+bool TlsStream::startAttempt(std::string reason) {
+    while (attemptsLeft_ > 0) {
+        --attemptsLeft_;
+        const std::size_t idx = addrCursor_++ % addrs_.size();
+        const int fd = ::socket(addrFamilies_[idx], SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
         if (fd < 0) {
+            reason = std::string{"socket: "} + std::strerror(errno);
             continue;
         }
         if (options_.tcpNoDelay) {
             const int one = 1;
             ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
         }
-        if (::connect(fd, ai->ai_addr, ai->ai_addrlen) == 0 || errno == EINPROGRESS) {
-            break;
+        if (::connect(fd, reinterpret_cast<const sockaddr*>(addrs_[idx].data()), addrLens_[idx]) != 0 &&
+            errno != EINPROGRESS) {
+            reason = std::string{"connect: "} + std::strerror(errno);
+            ::close(fd);
+            continue;
         }
-        ::close(fd);
-        fd = -1;
+        fd_ = fd;
+        state_ = State::Connecting;
+        currentMask_ = EPOLLOUT | EPOLLIN | EPOLLRDHUP;
+        loop_.add(fd_, currentMask_, this);
+        const std::int64_t perAddress =
+            std::max<std::int64_t>(1'500, options_.connectTimeoutMs / static_cast<std::int64_t>(addrs_.size()));
+        connectTimer_ = loop_.addTimer(attemptsLeft_ > 0 ? perAddress : options_.connectTimeoutMs, [this] {
+            connectTimer_ = 0;
+            if (state_ == State::Connecting) {
+                nextAddress("connect timeout");
+            } else if (state_ == State::Handshaking) {
+                fail("TLS handshake timeout");
+            }
+        });
+        return true;
     }
-    ::freeaddrinfo(result);
-    if (fd < 0) {
-        logf(LogLevel::Error, "connect %s:%u failed: %s", host.c_str(), port, std::strerror(errno));
-        state_ = State::Closed;
-        return false;
+    logf(LogLevel::Error, "connect %s:%u failed on all addresses: %s", host_.c_str(), port_, reason.c_str());
+    state_ = State::Closed;
+    return false;
+}
+
+void TlsStream::nextAddress(std::string_view reason) {
+    closeSocket();
+    if (attemptsLeft_ > 0) {
+        logf(LogLevel::Debug, "connect %s: %.*s, trying next address", host_.c_str(), static_cast<int>(reason.size()),
+             reason.data());
+        if (startAttempt(std::string{reason})) {
+            return;
+        }
     }
-    fd_ = fd;
-    state_ = State::Connecting;
-    currentMask_ = EPOLLOUT | EPOLLIN | EPOLLRDHUP;
-    loop_.add(fd_, currentMask_, this);
-    connectTimer_ = loop_.addTimer(options_.connectTimeoutMs, [this] {
+    state_ = State::Connecting;  // let fail() report exactly once
+    fail(reason);
+}
+
+void TlsStream::closeSocket() noexcept {
+    if (connectTimer_ != 0) {
+        loop_.cancelTimer(connectTimer_);
         connectTimer_ = 0;
-        if (state_ == State::Connecting || state_ == State::Handshaking) {
-            fail("connect timeout");
-        }
-    });
-    return true;
+    }
+    if (fd_ >= 0) {
+        loop_.remove(fd_);
+        ::close(fd_);
+        fd_ = -1;
+    }
 }
 
 bool TlsStream::send(std::string_view bytes) {
@@ -172,7 +228,7 @@ void TlsStream::onIoEvent(std::uint32_t events) {
     switch (state_) {
         case State::Connecting:
             if ((events & (EPOLLERR | EPOLLHUP)) != 0 && (events & EPOLLOUT) == 0) {
-                fail("connection refused");
+                nextAddress("connection refused");
                 return;
             }
             onConnectReady();
@@ -198,7 +254,7 @@ void TlsStream::onConnectReady() {
     socklen_t len = sizeof(err);
     ::getsockopt(fd_, SOL_SOCKET, SO_ERROR, &err, &len);
     if (err != 0) {
-        fail(std::string{"connect: "} + std::strerror(err));
+        nextAddress(std::string{"connect: "} + std::strerror(err));
         return;
     }
     if (!secure_) {

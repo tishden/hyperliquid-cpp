@@ -34,8 +34,19 @@ void encodeWsFrame(WsOpcode opcode, std::string_view payload, std::uint32_t mask
                                   static_cast<std::uint8_t>(maskKey >> 8), static_cast<std::uint8_t>(maskKey)};
     std::memcpy(p, mask, 4);
     p += 4;
+    // Mask 8 bytes at a time: the 4-byte key repeated twice as one 64-bit word.
     const auto* src = reinterpret_cast<const std::uint8_t*>(payload.data());
-    for (std::size_t i = 0; i < len; ++i) {
+    std::uint64_t mask64 = 0;
+    std::memcpy(&mask64, mask, 4);
+    std::memcpy(reinterpret_cast<std::uint8_t*>(&mask64) + 4, mask, 4);
+    std::size_t i = 0;
+    for (; i + 8 <= len; i += 8) {
+        std::uint64_t word = 0;
+        std::memcpy(&word, src + i, 8);
+        word ^= mask64;
+        std::memcpy(p + i, &word, 8);
+    }
+    for (; i < len; ++i) {
         p[i] = src[i] ^ mask[i & 3];
     }
 }

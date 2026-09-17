@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(hyperliquid-cpp
-    VERSION 1.0.0
+    VERSION 1.1.0
     DESCRIPTION "Low-latency C++ connector for Hyperliquid: market data, order management, EIP-712 signing"
     LANGUAGES CXX C)
 
@@ -18,6 +18,7 @@ option(HL_BUILD_BENCHMARKS   "Build Google Benchmark suite"      ${PROJECT_IS_TO
 option(HL_BUILD_EXAMPLES     "Build example applications"        ${PROJECT_IS_TOP_LEVEL})
 option(HL_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ${PROJECT_IS_TOP_LEVEL})
 option(HL_SANITIZE         "Build with AddressSanitizer + UBSan"      OFF)
+option(HL_NATIVE           "Optimise for the build machine (-march=native); do not use for portable binaries" OFF)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
@@ -72,6 +73,9 @@ endif()
 
 function(hl_target_defaults target)
     target_compile_options(${target} PRIVATE ${HL_WARNING_FLAGS})
+    if(HL_NATIVE)
+        target_compile_options(${target} PRIVATE -march=native)
+    endif()
     if(HL_SANITIZE)
         target_compile_options(${target} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
         target_link_options(${target} PRIVATE -fsanitize=address,undefined)

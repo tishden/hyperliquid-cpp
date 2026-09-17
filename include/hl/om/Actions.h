@@ -118,6 +118,17 @@ public:
     [[nodiscard]] std::string payload(const EncodedAction& action, std::uint64_t nonce,
                                       std::optional<std::uint64_t> expiresAfter = std::nullopt) const;
 
+    /// Append the signed payload to @p out (no temporary string).
+    void appendPayload(std::string& out, const EncodedAction& action, std::uint64_t nonce,
+                       std::optional<std::uint64_t> expiresAfter = std::nullopt) const;
+
+    /**
+     * @brief Sign and build the complete WebSocket post frame in one allocation — equivalent to
+     *        `wsPost(requestId, payload(action, nonce, expiresAfter))`. This is the order-entry fast path.
+     */
+    [[nodiscard]] std::string wsPostAction(std::uint64_t requestId, const EncodedAction& action, std::uint64_t nonce,
+                                           std::optional<std::uint64_t> expiresAfter = std::nullopt) const;
+
     /// WebSocket post frame `{"method":"post","id":…,"request":{"type":"action","payload":…}}`.
     [[nodiscard]] static std::string wsPost(std::uint64_t requestId, std::string_view payloadJson);
     /// WebSocket info-request frame `{"method":"post","id":…,"request":{"type":"info","payload":…}}`.

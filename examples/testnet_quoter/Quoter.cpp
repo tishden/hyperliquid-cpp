@@ -270,6 +270,9 @@ void Quoter::printSummary() const {
         std::printf("  actions         %" PRIu64 " sent, %" PRIu64 " via HTTP, %" PRIu64 " errors, %" PRIu64
                     " timeouts, %" PRIu64 " reconciles\n",
                     st.actionsSent, st.actionsViaHttp, st.actionErrors, st.timeouts, st.reconciles);
+        const auto sig = exchange_->signingStats();
+        std::printf("  signatures      %" PRIu64 " precomputed-nonce, %" PRIu64 " deterministic\n", sig.precomputed,
+                    sig.deterministic);
     }
     if (md_ != nullptr) {
         std::printf("  md messages     %" PRIu64 " (parse errors %" PRIu64 ", reconnects %" PRIu64 ")\n",

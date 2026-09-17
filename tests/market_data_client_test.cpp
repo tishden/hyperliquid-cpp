@@ -135,3 +135,19 @@ TEST_F(MarketDataClientTest, AggregatedBookAndRawSubscriptions) {
     EXPECT_EQ(venue.wsLog[3], R"({"method":"unsubscribe","subscription":{"type":"candle","coin":"BTC","interval":"1m"}})");
     EXPECT_EQ(hl::MarketDataClient::subscriptionJson("allMids"), R"({"type":"allMids"})");
 }
+
+// "localhost" resolves to ::1 and 127.0.0.1; the mock listens on IPv4 only, so every connect
+// whose rotation starts at ::1 must fall through to the next address instead of failing.
+TEST_F(MarketDataClientTest, FallsBackToNextResolvedAddress) {
+    hl::MarketDataConfig cfg = config();
+    cfg.urlOverride = "ws://localhost:" + std::to_string(venue.port()) + "/ws";
+    hl::MarketDataClient md(loop, listener, cfg);
+    md.subscribeTrades("BTC");
+    md.start();
+    ASSERT_TRUE(runUntil(loop, [&] { return listener.connected == 1; }));
+    for (int i = 0; i < 3; ++i) {  // reconnects rotate the starting address
+        venue.dropWebSockets();
+        ASSERT_TRUE(runUntil(loop, [&] { return listener.connected == i + 2; })) << i;
+    }
+    EXPECT_EQ(listener.disconnected, 3);
+}

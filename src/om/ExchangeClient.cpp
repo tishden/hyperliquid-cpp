@@ -74,6 +74,9 @@ ExchangeClient::ExchangeClient(EventLoop& loop, ExchangeListener& listener, Exch
       session_(loop, *this, sessionOptions(config_)) {
     account_ = parseOptionalAddress(config_.accountAddress, "accountAddress").value_or(signer_->address());
     user_ = vault_.value_or(account_);
+    if (config_.precomputedNonces > 0) {
+        signer_->enableNoncePool(config_.precomputedNonces, /*backgroundThread=*/true);
+    }
     if (RAND_bytes(reinterpret_cast<unsigned char*>(&cloidSession_), sizeof(cloidSession_)) != 1) {
         cloidSession_ = static_cast<std::uint64_t>(EventLoop::wallClockMs());
     }
@@ -489,9 +492,9 @@ void ExchangeClient::submitAction(const EncodedAction& action, ActionCallback ca
 
 void ExchangeClient::send(const EncodedAction& action, PendingAction pending) {
     const std::uint64_t id = nextRequestId_++;
-    const std::string payload = builder_.payload(action, nonces_.next());
     ++stats_.actionsSent;
     if (config_.transport == ActionTransport::WebSocket && session_.isOpen()) {
+        const std::string frame = builder_.wsPostAction(id, action, nonces_.next());
         pending.viaWebSocket = true;
         pending.timer = loop_.addTimer(config_.requestTimeoutMs, [this, id] {
             if (auto it = pending_.find(id); it != pending_.end()) {
@@ -500,9 +503,10 @@ void ExchangeClient::send(const EncodedAction& action, PendingAction pending) {
             completeAction(id, Error{Error::Kind::Timeout, 0, "no response to WebSocket post"});
         });
         pending_.emplace(id, std::move(pending));
-        session_.send(RequestBuilder::wsPost(id, payload));
+        session_.send(frame);
         return;
     }
+    const std::string payload = builder_.payload(action, nonces_.next());
     ++stats_.actionsViaHttp;
     pending_.emplace(id, std::move(pending));
     exchangeHttp_.postJson("/exchange", payload, [this, id](const Error& err, const HttpResponse& resp) {

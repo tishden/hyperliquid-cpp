@@ -76,6 +76,7 @@ build/release/examples/hl_testnet_quoter --coin BTC --half-spread-bps 1 --transp
 | `--requote-bps` | `3` | amend (batchModify) when the target moved this far |
 | `--duration` | ∞ | run time in seconds (Ctrl-C stops earlier) |
 | `--transport` | `ws` | `ws` = WebSocket `post`, `http` = `POST /exchange` |
+| `--presign` | `256` | precomputed ECDSA nonces kept ready (`0` = deterministic RFC 6979 signing only) |
 | `--dead-man-switch` | off | keep `scheduleCancel(now + 90 s)` refreshed every 30 s |
 | `--dry-run` | off | no orders, prints computed quotes |
 | `--mainnet --i-understand-this-trades-real-money` | off | mainnet (both flags required) |
@@ -89,7 +90,7 @@ the dead-man's switch and prints a summary.
 Illustrative, abridged output of a live session (values are examples):
 
 ```
-hyperliquid-cpp 1.0.0 — ETH quoter on testnet (live orders)
+hyperliquid-cpp 1.1.0 — ETH quoter on testnet (live orders)
 [hl][INFO] exchange: 212 assets loaded
 [hl][INFO] exchange: account value 999.12 USDC, 0 open positions
 [hl][INFO] exchange: ready
@@ -104,6 +105,7 @@ hyperliquid-cpp 1.0.0 — ETH quoter on testnet (live orders)
   position        0 → 0.0083
   pnl (mark@mid)  $0.04
   actions         58 sent, 0 via HTTP, 0 errors, 0 timeouts, 0 reconciles
+  signatures      58 precomputed-nonce, 0 deterministic
   md messages     4121 (parse errors 0, reconnects 0)
 ```
 
@@ -129,7 +131,8 @@ HL_PRIVATE_KEY=0x$(openssl rand -hex 32) build/release/examples/hl_testnet_quote
 The venue recovers the signer from the ECDSA signature over the EIP-712 digest of the msgpack action.
 The address in the rejection is **exactly** the locally derived signer address — so the action bytes,
 hash, digest and signature all match what the venue computes. With a wrong encoding the venue would
-recover a different, random-looking address. Repeat with `--transport http` to check the HTTP path.
+recover a different, random-looking address. Repeat with `--transport http` to check the HTTP path, and with
+`--presign 0` to check deterministic signing (the summary line `signatures` shows which path was used).
 Note the demo backs off exponentially on consecutive rejections.
 
 ## 7. Troubleshooting
