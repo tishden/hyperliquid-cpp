@@ -217,11 +217,13 @@ Three venue behaviours the run makes concrete, all of them surprises for someone
 | `@107` HYPE/USDC | spot, szDecimals 2, WebSocket transport, `--taker` with real fills, `expiresAfter` | 15/15 |
 | `@142` UBTC/USDC | spot, szDecimals 5, five-figure price | 13/13 |
 | `@151` UETH/USDC | spot, szDecimals 4, **`--transport http`** (10 of 10 actions over HTTP) | 13/13 |
+| `BTC` | **perps**: `updateLeverage`, reduce-only close, real taker fill (fee in USDC, so no dust) | 16/16 |
 
-Perp coins (`BTC`, `ETH`, `HYPE`, …) take the same run; they need a funded perp wallet, which is a
-separate balance from spot. This library cannot move funds between them — `usdClassTransfer` is a
-user-signed action it deliberately does not implement ([COVERAGE.md §5](COVERAGE.md#5-deliberately-excluded)),
-so do it in the UI.
+Perp coins take the same run and need no separate funding: on a unified account the spot USDC
+balance already collateralises them (see "Account modes" in [§6](#6-credentials)). Only in the older
+Manual/Standard mode is a perp balance separate, and this library cannot move funds into it —
+`usdClassTransfer` is a user-signed action it deliberately does not implement
+([COVERAGE.md §5](COVERAGE.md#5-deliberately-excluded)), so use the UI.
 
 ## 5. Docker
 
@@ -280,6 +282,26 @@ chmod 600 secrets/prod.env
   command-line arguments (visible in `ps`) and never in images or git.
 - Two processes must not share one signing key: nonces are generated per process and could collide. Use one
   agent wallet per process.
+
+### Account modes: where the money actually is
+
+Hyperliquid's default is the **Unified Account**: a single USDC balance, held in the *spot*
+clearinghouse, collateralises spot trading and perp margin at once. There is no spot↔perp transfer
+to perform — the UI has no such button, and `usdClassTransfer` is meaningless in this mode. The
+older *Manual/Standard* mode, aimed at market makers, does keep separate perp and spot balances.
+
+The consequence for anyone reading balances through the API:
+
+| Question | Where to look |
+|---|---|
+| How much can I trade with? | **spot USDC balance** — `InfoClient::spotBalances`, or `ExchangeConfig::loadSpotAssets = true` so the client seeds it |
+| What perp margin is committed right now? | `clearinghouseState.accountValue` — **0 while flat**, even on a funded account |
+| What positions do I have? | `clearinghouseState.assetPositions` — correct in every mode |
+
+So `exchange: account value 0 USDC, 0 open positions` in the start-up log is not a misconfiguration
+on a unified account: it is the venue reporting that no collateral is committed to perps yet.
+Measured on mainnet with 28.4 USDC on the account: `accountValue` read `0.0` while flat and `2.288`
+while an \$11.4 BTC perp position was open, and a restarted client seeded that position correctly.
 
 ### Choosing the network
 

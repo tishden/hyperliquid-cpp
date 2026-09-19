@@ -75,6 +75,15 @@ struct Position {
 };
 
 /// Perp margin account summary (`clearinghouseState`).
+/**
+ * @brief Perp clearinghouse state (`clearinghouseState`).
+ *
+ * On a **unified account** — Hyperliquid's default mode, where one USDC balance backs spot and
+ * perps together — `accountValue` is only the collateral currently allocated to perp positions,
+ * and it reads zero while flat. It is *not* the account's equity and must not be used as buying
+ * power: the spendable balance is the spot USDC balance (`SpotBalance`, `InfoClient::spotBalances`,
+ * or `ExchangeConfig::loadSpotAssets`). `positions` is reported correctly in every mode.
+ */
 struct AccountState {
     Decimal accountValue{};
     Decimal totalNtlPos{};

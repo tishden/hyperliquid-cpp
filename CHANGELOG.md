@@ -25,6 +25,14 @@ All notable changes to this project are documented here. The project follows
 - `MarketDataClient::l2BookSubscriptionJson(coin, options)` — the exact string `subscribeL2Book`
   sends, so a subscription made with `nSigFigs` or `fast` can be reproduced for `unsubscribeRaw`.
 
+### Documentation
+- Documented Hyperliquid's **unified account** mode, which is the venue default: one USDC balance in
+  the spot clearinghouse backs spot and perps together, there is no spot↔perp transfer, and
+  `clearinghouseState.accountValue` therefore reports only the collateral committed to perps — zero
+  while flat — rather than the account's equity. Buying power comes from the spot balance;
+  `positions` is correct in every mode, so seeding and reconciliation are unaffected. Verified on
+  mainnet, including a restarted client seeding an open perp position.
+
 ### Fixed
 - **`onReady()` fired before orders already resting on the venue had been adopted.** The start-up
   `openOrders` listing is asynchronous, and readiness did not wait for it — measured at 3 s on

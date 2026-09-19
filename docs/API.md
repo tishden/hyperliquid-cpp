@@ -1585,6 +1585,16 @@ The venue additionally requires an order value of at least **10 USDC** (not chec
 | `positions` | `assetPositions[]` |
 | `timeMs` | `time` |
 
+> **`accountValue` is not your equity on a unified account.** Hyperliquid's default account mode is
+> *Unified Account*: one USDC balance, held in the **spot** clearinghouse, collateralises spot and
+> perps together, and there is no spot↔perp transfer (the UI has no such button). In that mode
+> `clearinghouseState` reports only what is currently allocated to perp positions — measured on
+> mainnet, an account holding 28.4 USDC read `accountValue 0.0` while flat and `2.288` while a
+> \$11.4 BTC position was open. Take buying power from the spot USDC balance instead
+> (`InfoClient::spotBalances`, or `ExchangeConfig::loadSpotAssets` to have the client seed it).
+> `positions` is unaffected and correct in every mode, so restart seeding and reconciliation work
+> normally — only the money figure is narrower than its name suggests.
+
 **`SpotBalance`** (`spotClearinghouseState`)
 
 | Field | Type | Wire |
