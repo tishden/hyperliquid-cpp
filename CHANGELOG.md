@@ -6,10 +6,15 @@ All notable changes to this project are documented here. The project follows
 ## [Unreleased]
 
 ### Added
+- `docs/COMPARISON.md` — a side-by-side with the free MIT-licensed C++ SDK for Hyperliquid, stating
+  where that one is ahead (endpoint breadth, test count, project hygiene, price) as plainly as
+  where this one is (the stateful trading layer above a transport SDK, engineered latency, three
+  private dependencies, live mainnet verification, warranty and maintenance). A condensed version
+  is now a section of the Russian offer PDF, which grew to four pages.
 - Copyright and `SPDX-License-Identifier: LicenseRef-hyperliquid-cpp` headers in every source file,
   script, CMake file and the Dockerfile; the licence files and the documentation now name the
   copyright holder.
-- `docs/hyperliquid-cpp-offer-ru.pdf` — a three-page commercial one-pager in Russian describing what
+- `docs/hyperliquid-cpp-offer-ru.pdf` — a commercial one-pager in Russian describing what
   is being sold, positioned as a fast Hyperliquid client rather than a trading platform. Source in
   `docs/offer-ru.html`, rebuilt with `scripts/offer-pdf.sh`.
 - README: the testnet demo written out end to end — build, key-free dry run, credentials, a live

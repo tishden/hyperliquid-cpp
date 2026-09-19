@@ -20,6 +20,7 @@ order management and EIP-712 signing — in one dependency-light static library.
 | **Signing** | byte-identical to the official Python SDK (golden-vector tested) · optional precomputed-nonce ECDSA: 0.17 µs per signature · agent (API) wallets · vaults / sub-accounts · `expiresAfter` |
 | **Venue rules** | asset ids resolved from `meta`/`spotMeta` · exact price (5 significant figures) and size rounding |
 | **Engineering** | exact fixed-point decimals (no floating point on the wire path) · single-threaded epoll reactor, re-entrancy-safe callbacks · 190 tests incl. end-to-end against a mock venue and a 17-step live acceptance run · ASan/UBSan/TSan clean · GCC 11/15, Clang 21 · `-Werror` |
+| **Not a general SDK** | this is a stateful trading client — order table, book, positions, reconciliation — not a thin endpoint wrapper. A free MIT SDK with far wider endpoint coverage exists; the honest side-by-side, including where it wins, is in [docs/COMPARISON.md](docs/COMPARISON.md) |
 | **Not included, by design** | the library cannot move funds: withdrawals, transfers and staking need EIP-712 user-signed actions it does not implement, so a compromised strategy process cannot drain the account ([docs/COVERAGE.md](docs/COVERAGE.md)) |
 
 ## Performance
@@ -232,6 +233,7 @@ looks like: [docs/RUNNING.md §4](docs/RUNNING.md#4-acceptance-run-against-a-liv
 | [docs/SIGNING.md](docs/SIGNING.md) | Exact Hyperliquid L1-action signing specification with worked vectors; precomputed-nonce ECDSA |
 | [docs/TESTNET.md](docs/TESTNET.md) | Testnet account, API wallet, running and reading the demo |
 | [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Benchmark results and how to reproduce them |
+| [docs/COMPARISON.md](docs/COMPARISON.md) | Side-by-side with the free open-source C++ SDK: what each one is, where it is ahead, where this one is, and how to choose |
 | [docs/LICENSING.md](docs/LICENSING.md) | The licence in plain language: what you may and may not do, warranties, FAQ, pre-signature checklist |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
 | [docs/hyperliquid-cpp-offer-ru.pdf](docs/hyperliquid-cpp-offer-ru.pdf) | Коммерческое предложение (RU) — what is being sold, in three pages. Source: [docs/offer-ru.html](docs/offer-ru.html), rebuild with `scripts/offer-pdf.sh` |
