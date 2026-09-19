@@ -213,19 +213,23 @@ decimals; sizes have `szDecimals` decimals.
 | End-to-end | `ExchangeClient` and `MarketDataClient` over real sockets against `MockVenue` (HTTP + WebSocket server): lifecycle, partial fills, duplicates, rejections, batches, cancel races, modify with oid change, timeouts, HTTP transport, disconnect/reconnect reconciliation, missed fills, external orders, agent wallets, heartbeats, stale detection | `tests/exchange_client_test.cpp`, `tests/market_data_client_test.cpp` |
 | Live | signing validated against the real testnet: the venue recovers exactly the signer address from our signatures over both WS `post` and HTTP | `hl_testnet_quoter`, see [TESTNET.md](TESTNET.md) |
 
-### Verification matrix (v1.1.0)
+### Verification matrix (v1.2.0)
 
 | Build | Tests | Result |
 |---|---|---|
-| Clang 21, Release | 135 | all passed |
-| GCC 11.5 (system), Release | 135 | all passed |
-| GCC 15, Release | 135 | all passed |
-| Clang 21, AddressSanitizer + UBSan | 135 | all passed, no reports |
-| Clang 21, ThreadSanitizer (library tests; examples not built) | 129 | all passed, no reports |
-| Docker build stage (Ubuntu 24.04, GCC 13) | 135 | all passed |
+| Clang 21, Release | 138 | all passed |
+| GCC 11.5 (system), Release | 138 | all passed |
+| GCC 15, Release | 138 | all passed |
+| Clang 21, AddressSanitizer + UBSan | 138 | all passed, no reports |
+| Clang 21, ThreadSanitizer (library tests; examples not built) | 132 | all passed, no reports |
+| Docker build stage (Ubuntu 24.04, GCC 13) | 138 | all passed |
 
 | Live check against Hyperliquid testnet | Result |
 |---|---|
+| `hl_live_check --taker` (WebSocket transport) | **16/16 steps passed** — resting order, `orderStatus`/`frontendOpenOrders`, modify with oid change, cancel, batch + cancelAll, post-only rejection, local validation, IOC fill with fee and position, reduce-only close, `scheduleCancel` (venue requires $1 M volume), `updateLeverage`, forced reconnect + reconciliation, clean exit |
+| `hl_live_check --taker --transport http` | **16/16 steps passed**, 13/13 actions over `POST /exchange` |
+| Quoter, 70 s quoting at the touch | 2 maker fills (0.0045 ETH each, fee 0.001781 USDC = 1.5 bps), inventory skew applied, orders canceled on exit |
+| Quoter, 5 min at 1.5 bps from mid | 21 amendments, 0 rejects, 0 errors, no fills (quotes behind the touch) |
 | Market data (`l2Book`, `bbo`, `trades`, `activeAssetCtx`) | books built, 0 parse errors |
 | Mainnet market-data replay parse | 758 frames, 0 parse errors |
 | Signed orders, RFC 6979, WebSocket `post` and HTTP | venue recovered exactly the local signer address |

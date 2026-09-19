@@ -1,6 +1,6 @@
 # hyperliquid-cpp — API Reference
 
-Version 1.1.0 · C++20 · Linux (epoll) · namespace `hl`
+Version 1.2.0 · C++20 · Linux (epoll) · namespace `hl`
 
 This document describes every public type and function of the library as declared under
 `include/hl/`. Behaviour notes describe what the implementation actually does; where the venue
@@ -381,7 +381,7 @@ void logf(LogLevel level, const char* fmt, ...) noexcept;         // printf-styl
 fixed-point products.
 
 `#include "hl/Version.h"` — `hl::kVersionMajor` (1), `kVersionMinor` (0), `kVersionPatch` (0),
-`kVersionString` (`"1.1.0"`).
+`kVersionString` (`"1.2.0"`).
 
 ---
 
@@ -796,7 +796,7 @@ enum class ActionTransport : std::uint8_t { WebSocket, Http };
 |---|---|---|---|
 | `network` | `Network` | `Testnet` | Endpoints and signing domain |
 | `privateKey` | `std::string` | empty (**required**) | secp256k1 key of the signing wallet, hex. Use an API (agent) wallet. |
-| `accountAddress` | `std::string` | empty | Master account address. Required when `privateKey` belongs to an agent wallet; empty = signer's own address. |
+| `accountAddress` | `std::string` | empty | Master account address. Required when `privateKey` belongs to an agent wallet; empty = signer's own address, **or** the master reported by `userRole` when the signer turns out to be an agent (see Lifecycle). |
 | `vaultAddress` | `std::string` | empty | Trade for a vault / sub-account. Included in every signature and payload; also used as the `user` for streams and info queries. |
 | `transport` | `ActionTransport` | `WebSocket` | See above |
 | `precomputedNonces` | `std::size_t` | `0` (off) | Size of the precomputed-nonce ECDSA pool kept full by an internal background thread ([§6.1](#61-signer-actionhash-agentdigest)). Cuts signing from ~40 µs to ~0.17 µs per action; signatures become randomised. Recommended: 256–1024 for active quoting. |
@@ -994,6 +994,12 @@ public:
 | `void stop()` | Idempotent. Closes the WebSocket, cancels timers and **drops pending actions without invoking their callbacks**. Called by the destructor. Orders on the venue are not canceled — call `cancelAll` first if desired. |
 | `bool isReady() const` | `true` between `onReady` and the next disconnect |
 
+**Agent-wallet detection.** `start()` also queries `{"type":"userRole","user":<signer>}`. If the signing key is
+an API (agent) wallet and `accountAddress` was left empty, the client adopts the master account the venue
+reports and resubscribes the user streams to it. If a *different* `accountAddress` was configured, it logs an
+error and calls `ExchangeListener::onError` with `Error{Rejected}` — otherwise orders would be booked on the
+master while order updates, fills and positions were read from another address.
+
 #### Order entry
 
 All order-entry methods require `start()` to have been called; those marked † also require asset metadata to be
@@ -1094,6 +1100,7 @@ validation and no order-table effect; the parsed response goes to `callback`.
 | `const Address& accountAddress() const` | Configured master account, or the signer address |
 | `const Address& signerAddress() const` | Address derived from `privateKey` |
 | `InfoClient& info()` | The client's info connection — reuse it for your own queries |
+| `WsSession& session()` | The private WebSocket session: `subscriptions()`, `reconnectCount()`, `reconnectNow()` |
 | `Cloid nextCloid()` | `Cloid{sessionId, counter}`: a random 64-bit session id (never all-ones) and a counter starting at 1 |
 | `const Stats& stats() const` | Counters below |
 | `Signer::SigningStats signingStats() const` | Signatures by path: `precomputed` (nonce pool) / `deterministic` (RFC 6979) |
@@ -1129,6 +1136,7 @@ InfoClient(EventLoop& loop, std::string baseUrl, HttpClientOptions options = {})
 | `openOrders(const Address& user, Callback<std::vector<OpenOrder>>)` | `{"type":"frontendOpenOrders","user":"0x…"}` | `std::vector<OpenOrder>` |
 | `orderStatus(const Address& user, const Cloid& cloid, Callback<OrderStatusInfo>)` | `{"type":"orderStatus","user":"0x…","oid":"0x<cloid>"}` | `OrderStatusInfo` |
 | `orderStatus(const Address& user, std::uint64_t oid, Callback<OrderStatusInfo>)` | `{"type":"orderStatus","user":"0x…","oid":<oid>}` | `OrderStatusInfo` |
+| `userRole(const Address& user, Callback<UserRole>)` | `{"type":"userRole","user":"0x…"}` | `UserRole{role, master}` — `role` is `"user"`, `"agent"` (then `master` is the account it acts for), `"vault"`, `"subAccount"`, … |
 | `userFills(const Address& user, Callback<std::vector<Fill>>)` | `{"type":"userFills","user":"0x…"}` | Up to 2 000 most recent fills |
 | `l2Book(std::string_view coin, Callback<L2Snapshot>)` | `{"type":"l2Book","coin":"…"}` | `L2Snapshot` |
 | `allMids(Callback<std::vector<std::pair<std::string, Decimal>>>)` | `{"type":"allMids"}` | `(coin, mid)` pairs |
@@ -1588,6 +1596,7 @@ public:
 | `void subscribe(std::string subscriptionJson)` | Register a subscription object; sends `{"method":"subscribe","subscription":…}` now if open; replayed on every reconnect. Exact-string duplicates are ignored. |
 | `void unsubscribe(std::string_view subscriptionJson)` | Remove from the registry and send `unsubscribe` if open (no-op if not registered) |
 | `const std::vector<std::string>& subscriptions() const` | Registry |
+| `void reconnectNow(std::string_view reason = "manual reconnect")` | Close and reconnect immediately (no backoff delay). The close is reported to the listener exactly like a spontaneous disconnect, so subscriptions are replayed and dependent state (readiness, reconciliation) is rebuilt. |
 | `bool send(std::string_view text)` | Raw text frame; `false` if not open |
 | `bool isOpen() const` | |
 | `std::uint64_t reconnectCount() const` | Reconnect attempts made |

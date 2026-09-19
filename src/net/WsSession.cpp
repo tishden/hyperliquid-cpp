@@ -58,6 +58,18 @@ void WsSession::unsubscribe(std::string_view subscriptionJson) {
 
 bool WsSession::send(std::string_view text) { return ws_.sendText(text); }
 
+void WsSession::reconnectNow(std::string_view reason) {
+    if (!running_) {
+        return;
+    }
+    nextDelayMs_ = options_.reconnectMinDelayMs;
+    const bool wasOpen = ws_.isOpen();
+    ws_.close();
+    if (wasOpen) {
+        onWsClosed(reason);  // same path as a spontaneous close: listener, backoff, resubscribe
+    }
+}
+
 void WsSession::onWsOpen() {
     logf(LogLevel::Info, "ws: connected to %s (%zu subscriptions)", options_.url.c_str(), subscriptions_.size());
     nextDelayMs_ = options_.reconnectMinDelayMs;

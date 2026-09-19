@@ -10,3 +10,7 @@ hl_target_defaults(hl_testnet_quoter)
 add_executable(hl_book_printer book_printer/main.cpp)
 target_link_libraries(hl_book_printer PRIVATE hyperliquid)
 hl_target_defaults(hl_book_printer)
+
+add_executable(hl_live_check live_check/main.cpp)
+target_link_libraries(hl_live_check PRIVATE hyperliquid)
+hl_target_defaults(hl_live_check)

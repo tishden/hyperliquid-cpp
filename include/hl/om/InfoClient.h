@@ -42,6 +42,8 @@ public:
     void orderStatus(const Address& user, const Cloid& cloid, Callback<OrderStatusInfo> callback);
     /// Status of one order by exchange id.
     void orderStatus(const Address& user, std::uint64_t oid, Callback<OrderStatusInfo> callback);
+    /// How the venue classifies @p user: plain user, agent (with its master account), vault, sub-account.
+    void userRole(const Address& user, Callback<UserRole> callback);
     /// Most recent fills of @p user (up to 2 000).
     void userFills(const Address& user, Callback<std::vector<Fill>> callback);
     /// One-shot L2 snapshot.

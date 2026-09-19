@@ -15,10 +15,10 @@ order management and EIP-712 signing — in one dependency-light static library.
 |---|---|
 | **Market data** | `l2Book`, `bbo`, `trades`, `activeAssetCtx`, `allMids`, raw channels · auto-reconnect with subscription replay · heartbeat + stale detection |
 | **Order book** | allocation-free, 64 levels/side · snapshot + best-bid/offer overlay · mid, microprice, spread, depth, VWAP |
-| **Order management** | place / batch / cancel / cancel-all / modify / scheduleCancel / updateLeverage · WebSocket `post` **or** HTTP · unified order state from acks + `orderUpdates` + `userFills` · positions · automatic reconciliation |
+| **Order management** | place / batch / cancel / cancel-all / modify / scheduleCancel / updateLeverage · WebSocket `post` **or** HTTP · unified order state from acks + `orderUpdates` + `userFills` · positions · automatic reconciliation · agent-wallet/master detection |
 | **Signing** | byte-identical to the official Python SDK (golden-vector tested) · optional precomputed-nonce ECDSA: 0.17 µs per signature · agent (API) wallets · vaults / sub-accounts · `expiresAfter` |
 | **Venue rules** | asset ids resolved from `meta`/`spotMeta` · exact price (5 significant figures) and size rounding |
-| **Engineering** | exact fixed-point decimals (no floating point on the wire path) · single-threaded epoll reactor · 135 tests incl. end-to-end against a mock venue · ASan/UBSan/TSan clean · GCC 15 / Clang 21 · `-Werror` |
+| **Engineering** | exact fixed-point decimals (no floating point on the wire path) · single-threaded epoll reactor · 138 tests incl. end-to-end against a mock venue and a live acceptance run · ASan/UBSan/TSan clean · GCC 15 / Clang 21 · `-Werror` |
 
 ## Performance
 
@@ -34,9 +34,10 @@ Measured on a 2012 Intel i7-3820, single core, Clang 21 `-O3` (current server co
 | Exact decimal parse (vs `strtod` 101 ns) | **19 ns** |
 | Order → signed WebSocket frame (msgpack, Keccak, EIP-712, ECDSA) | 42 µs → **3.3 µs** with precomputed nonces |
 
-Verified: 135 tests on Clang 21 / GCC 11 / GCC 15, ASan+UBSan and ThreadSanitizer clean; signatures (deterministic and
-precomputed-nonce) accepted by the live testnet over WebSocket and HTTP — see
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#verification-matrix-v110).
+Verified: 138 tests on Clang 21 / GCC 11 / GCC 15, ASan+UBSan and ThreadSanitizer clean, plus a **16-step live
+acceptance run on testnet** (resting orders, amendments, cancels, batches, post-only rejection, real taker and
+maker fills with fees and positions, forced reconnect with reconciliation) over both WebSocket and HTTP — see
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#verification-matrix-v120).
 
 Hyperliquid's own latency floor is block time (~0.2 s), so the connector never is the bottleneck —
 it leaves the whole budget to your strategy.
@@ -49,7 +50,7 @@ simdjson are fetched and built statically).
 
 ```bash
 scripts/build.sh release           # or: cmake --preset release && cmake --build --preset release
-scripts/test.sh release            # 135 tests, ~3 s
+scripts/test.sh release            # 138 tests, ~3 s
 build/release/examples/hl_book_printer BTC ETH SOL
 build/release/examples/hl_testnet_quoter --dry-run --coin ETH
 ```
@@ -57,7 +58,7 @@ build/release/examples/hl_testnet_quoter --dry-run --coin ETH
 ### Docker
 
 ```bash
-docker build -t hyperliquid-cpp .                  # compiles, runs all 135 tests, produces a ~133 MB runtime image
+docker build -t hyperliquid-cpp .                  # compiles, runs all 138 tests, produces a ~134 MB runtime image
 docker run --rm hyperliquid-cpp hl_book_printer BTC ETH
 docker run --rm hyperliquid-cpp hl_testnet_quoter --dry-run --coin ETH
 docker run --rm -e HL_PRIVATE_KEY -e HL_ACCOUNT_ADDRESS hyperliquid-cpp hl_testnet_quoter --coin ETH --duration 600
@@ -126,6 +127,18 @@ ex.start();
 loop.run();
 ```
 
+## Acceptance check against the live venue
+
+`hl_live_check` runs the order-management contract end to end against Hyperliquid and prints a pass/fail table
+(exit code 0 only if every step passes) — use it after every build, configuration change or credential rotation:
+
+```bash
+build/release/examples/hl_live_check --key-file secrets/testnet.env --coin ETH --taker
+build/release/examples/hl_live_check --key-file secrets/testnet.env --coin ETH --flatten   # emergency stop
+```
+
+Full output of a real run: [docs/TESTNET.md](docs/TESTNET.md#4-acceptance-check).
+
 ## The testnet demo
 
 `hl_testnet_quoter` is a complete, readable market maker built only on the public API: it maintains
@@ -159,7 +172,7 @@ Doxygen HTML: `scripts/docs.sh`.
 
 ```cmake
 include(FetchContent)
-FetchContent_Declare(hyperliquid_cpp GIT_REPOSITORY <your-licensed-repo-url> GIT_TAG v1.1.0)
+FetchContent_Declare(hyperliquid_cpp GIT_REPOSITORY <your-licensed-repo-url> GIT_TAG v1.2.0)
 FetchContent_MakeAvailable(hyperliquid_cpp)      # or: add_subdirectory(third_party/hyperliquid-cpp)
 target_link_libraries(my_bot PRIVATE hyperliquid::hyperliquid)
 ```

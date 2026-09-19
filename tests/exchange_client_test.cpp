@@ -34,6 +34,7 @@ struct FakeHyperliquid {
     bool autoRespond{true};
     std::uint64_t nextOid{1000};
     std::map<std::string, std::string> orderStatusByKey;  // cloid or oid text → info JSON
+    std::string userRoleResponse{R"({"role":"user"})"};
     std::function<std::string(const std::string& actionType, const std::string& request)> actionPayload;
     std::vector<std::string> posts;
     int wsConn{-1};
@@ -81,6 +82,9 @@ struct FakeHyperliquid {
                    R"("crossMarginSummary":{},"withdrawable":"900","assetPositions":[{"type":"oneWay","position":{"coin":"ETH",)"
                    R"("szi":"-0.5","entryPx":"3000","positionValue":"1500","unrealizedPnl":"-2","returnOnEquity":"0",)"
                    R"("liquidationPx":null,"marginUsed":"75","leverage":{"type":"cross","value":20}}}],"time":1})";
+        }
+        if (body.find("userRole") != std::string::npos) {
+            return userRoleResponse;
         }
         if (body.find("orderStatus") != std::string::npos) {
             std::string key = capture(body, R"re("oid":"?(0x[0-9a-f]+|[0-9]+)"?)re");
@@ -516,6 +520,38 @@ TEST_F(ExchangeClientTest, AgentWalletUsesMasterAccountForStreams) {
         subscribedMaster |= m.find("0x00000000000000000000000000000000000000aa") != std::string::npos;
     }
     EXPECT_TRUE(subscribedMaster);
+}
+
+TEST_F(ExchangeClientTest, AgentWalletWithoutAccountAddressAdoptsItsMaster) {
+    constexpr const char* kMaster = "0x1111111111111111111111111111111111111111";
+    fake.userRoleResponse = std::string{R"({"role":"agent","data":{"user":")"} + kMaster + R"("}})";
+    hl::ExchangeConfig cfg;
+    cfg.privateKey = kKey;  // no accountAddress configured
+    cfg.restUrlOverride = fake.venue.httpUrl();
+    cfg.wsUrlOverride = fake.venue.wsUrl();
+    hl::ExchangeClient client(loop, listener, cfg);
+    client.start();
+    ASSERT_TRUE(runUntil(loop, [&] { return listener.ready > 0 && hl::toHex(client.accountAddress()) == kMaster; }));
+    EXPECT_TRUE(listener.errors.empty());
+    bool subscribedMaster = false;
+    for (const auto& m : fake.venue.wsLog) {
+        subscribedMaster |= m.find(R"("type":"userFills")") != std::string::npos && m.find(kMaster) != std::string::npos;
+    }
+    EXPECT_TRUE(subscribedMaster) << "user streams must follow the master account";
+}
+
+TEST_F(ExchangeClientTest, AgentWalletWithWrongAccountAddressIsReported) {
+    fake.userRoleResponse = R"({"role":"agent","data":{"user":"0x1111111111111111111111111111111111111111"}})";
+    hl::ExchangeConfig cfg;
+    cfg.privateKey = kKey;
+    cfg.accountAddress = "0x00000000000000000000000000000000000000aa";  // not the master
+    cfg.restUrlOverride = fake.venue.httpUrl();
+    cfg.wsUrlOverride = fake.venue.wsUrl();
+    hl::ExchangeClient client(loop, listener, cfg);
+    client.start();
+    ASSERT_TRUE(runUntil(loop, [&] { return !listener.errors.empty(); }));
+    EXPECT_NE(listener.errors[0].message.find("does not match the agent's master account"), std::string::npos);
+    EXPECT_EQ(hl::toHex(client.accountAddress()), "0x00000000000000000000000000000000000000aa");
 }
 
 TEST_F(ExchangeClientTest, RejectsMalformedConfig) {

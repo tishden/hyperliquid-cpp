@@ -85,6 +85,16 @@ struct AccountState {
     std::int64_t timeMs{};
 };
 
+/// Result of a `userRole` query: how the venue classifies an address.
+struct UserRole {
+    /// "user", "agent", "vault", "subAccount", "missing", …
+    std::string role{};
+    /// For `role == "agent"`: the master account the agent acts for.
+    std::optional<Address> master{};
+
+    [[nodiscard]] bool isAgent() const noexcept { return role == "agent"; }
+};
+
 /// One-shot L2 snapshot (`l2Book` info request).
 struct L2Snapshot {
     std::string coin{};

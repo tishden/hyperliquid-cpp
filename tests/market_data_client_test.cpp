@@ -151,3 +151,14 @@ TEST_F(MarketDataClientTest, FallsBackToNextResolvedAddress) {
     }
     EXPECT_EQ(listener.disconnected, 3);
 }
+
+TEST_F(MarketDataClientTest, ReconnectNowResubscribesImmediately) {
+    hl::MarketDataClient md(loop, listener, config());
+    md.subscribeTrades("BTC");
+    md.start();
+    ASSERT_TRUE(runUntil(loop, [&] { return countSubscribes("trades") == 1; }));
+    md.session().reconnectNow();
+    ASSERT_TRUE(runUntil(loop, [&] { return listener.connected == 2 && countSubscribes("trades") == 2; }));
+    EXPECT_EQ(listener.disconnected, 1);
+    EXPECT_EQ(md.reconnectCount(), 1U);
+}

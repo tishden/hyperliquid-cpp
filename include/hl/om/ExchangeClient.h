@@ -200,6 +200,8 @@ public:
     [[nodiscard]] const Address& accountAddress() const noexcept { return account_; }
     [[nodiscard]] const Address& signerAddress() const noexcept { return signer_->address(); }
     [[nodiscard]] InfoClient& info() noexcept { return info_; }
+    /// The private WebSocket session (subscriptions, reconnect counter, `reconnectNow`).
+    [[nodiscard]] WsSession& session() noexcept { return session_; }
     /// Generate a fresh, session-unique cloid.
     [[nodiscard]] Cloid nextCloid() noexcept;
 
@@ -250,6 +252,7 @@ private:
     void onVenueError(std::string_view text) override;
 
     void bootstrap();
+    void resubscribeUser();
     void maybeReady();
     Error checkReady() const;
     Result<OrderWire> buildWire(const OrderRequest& request, Cloid cloid) const;

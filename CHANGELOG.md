@@ -3,6 +3,20 @@
 All notable changes to this project are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] — 2026-09-19
+
+### Added
+- `hl_live_check` — scripted acceptance run of the whole order-management contract against a live venue
+  (16 steps, pass/fail table, non-zero exit on failure), plus `--flatten` to cancel everything and close a
+  position. Validated on testnet over both WebSocket and HTTP with real taker and maker fills.
+- **Agent-wallet detection**: `InfoClient::userRole` and a start-up check in `ExchangeClient` — with no
+  `accountAddress` the master account reported by the venue is adopted; with a wrong one the mismatch is
+  logged and reported through `onError` (previously orders rested while fills, positions and balance stayed
+  empty).
+- `WsSession::reconnectNow()` and `ExchangeClient::session()`.
+- `docs/TESTNET.md`: agent-wallet vs master account, acceptance-check section, real run outputs, observed
+  testnet fees; `docs/ORDER_MANAGEMENT.md`: acknowledgement-vs-fill-stream timing, agent detection.
+
 ## [1.1.0] — 2026-09-17
 
 ### Added
@@ -14,7 +28,7 @@ All notable changes to this project are documented here. The project follows
 - `ExchangeClient::signingStats()`; CMake option `HL_NATIVE`.
 - Documentation: `docs/RUNNING.md`, `docs/ORDER_MANAGEMENT.md`; precomputed-nonce section in `docs/SIGNING.md`;
   benchmark breakdown of the order path.
-- Stage benchmarks for order entry; nonce-pool, scalar and address-fallback tests (135 tests; ThreadSanitizer clean).
+- Stage benchmarks for order entry; nonce-pool, scalar and address-fallback tests (ThreadSanitizer clean).
 
 ### Changed
 - Keccak-f[1600] unrolled: −33 % per hash (at parity with OpenSSL assembly).

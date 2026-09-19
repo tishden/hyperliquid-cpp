@@ -143,6 +143,43 @@ void ExchangeClient::bootstrap() {
         logf(LogLevel::Info, "exchange: %zu assets loaded", assets_.all().size());
         maybeReady();
     });
+    // The venue attributes an agent wallet's actions to its master account: order updates, fills and
+    // positions belong to the master, not to the agent address. Getting `accountAddress` wrong here
+    // silently produces "orders work but nothing is reported", so check it explicitly.
+    info_.userRole(signer_->address(), [this](const Result<UserRole>& r) {
+        if (!r) {
+            logf(LogLevel::Debug, "exchange: userRole query failed (%s)", r.error().message.c_str());
+            return;
+        }
+        if (!r->isAgent()) {
+            return;
+        }
+        if (!r->master.has_value()) {
+            logf(LogLevel::Warn, "exchange: signer is an API (agent) wallet but the venue did not report its master");
+            return;
+        }
+        const Address master = *r->master;
+        if (master == user_) {
+            return;
+        }
+        if (config_.accountAddress.empty() && !vault_.has_value()) {
+            // Not configured: adopt the master the venue reports, so streams and positions match the orders.
+            logf(LogLevel::Info, "exchange: signer is an agent wallet of %s — using it as the account",
+                 toHex(master).c_str());
+            account_ = master;
+            user_ = master;
+            resubscribeUser();
+            return;
+        }
+        logf(LogLevel::Error,
+             "exchange: signer %s is an agent wallet of account %s, but this client is configured for %s — "
+             "orders will be placed on %s while order updates, fills and positions are read from %s",
+             toHex(signer_->address()).c_str(), toHex(master).c_str(), toHex(user_).c_str(), toHex(master).c_str(),
+             toHex(user_).c_str());
+        listener_.onError(Error{Error::Kind::Rejected, 0,
+                                "accountAddress " + toHex(user_) + " does not match the agent's master account " +
+                                    toHex(master)});
+    });
     if (positionsLoaded_) {
         return;
     }
@@ -151,6 +188,32 @@ void ExchangeClient::bootstrap() {
             logf(LogLevel::Warn, "exchange: clearinghouseState failed (%s); positions start from fills only",
                  r.error().message.c_str());
         } else {
+            for (const auto& p : r.value().positions) {
+                positions_.try_emplace(p.coin, p.szi);
+            }
+            logf(LogLevel::Info, "exchange: account value %s USDC, %zu open positions",
+                 r.value().accountValue.toString().c_str(), r.value().positions.size());
+        }
+        positionsLoaded_ = true;
+        maybeReady();
+    });
+}
+
+void ExchangeClient::resubscribeUser() {
+    const std::string user = toHex(user_);
+    for (const auto& sub : session_.subscriptions()) {
+        session_.unsubscribe(sub);
+    }
+    orderUpdatesAcked_ = false;
+    userFillsAcked_ = false;
+    ready_ = false;
+    session_.subscribe(R"({"type":"orderUpdates","user":")" + user + R"("})");
+    session_.subscribe(R"({"type":"userFills","user":")" + user + R"("})");
+    positions_.clear();
+    fillsSnapshotSeen_ = false;
+    positionsLoaded_ = false;
+    info_.clearinghouseState(user_, [this](const Result<AccountState>& r) {
+        if (r) {
             for (const auto& p : r.value().positions) {
                 positions_.try_emplace(p.coin, p.szi);
             }

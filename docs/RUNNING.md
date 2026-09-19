@@ -60,6 +60,7 @@ faster Keccak than GCC on the reference machine.
 |---|---|---|
 | `build/release/examples/hl_book_printer` | top of book, spread, microprice, funding, last trade for coins; mainnet by default, `--testnet` | no |
 | `build/release/examples/hl_testnet_quoter` | two-sided post-only market maker on testnet | no with `--dry-run`, yes otherwise |
+| `build/release/examples/hl_live_check` | scripted acceptance run of the whole order-management contract against the live venue; exit code 0 only if every step passed | yes |
 | `build/release/tests/hl_tests` | full test suite (runs offline against an in-process mock venue) | no |
 | `build/release/benchmarks/hl_benchmarks` | Google Benchmark suite | no |
 
@@ -69,6 +70,14 @@ build/release/examples/hl_testnet_quoter --dry-run --coin ETH
 
 export HL_PRIVATE_KEY=0x…  HL_ACCOUNT_ADDRESS=0x…
 build/release/examples/hl_testnet_quoter --coin ETH --notional 20 --half-spread-bps 8 --duration 600
+```
+
+```bash
+# acceptance run before deploying a new build or configuration
+build/release/examples/hl_live_check --key-file secrets/testnet.env --coin ETH --taker
+build/release/examples/hl_live_check --key-file secrets/testnet.env --coin ETH --transport http
+# emergency: cancel everything and close the position of one coin
+build/release/examples/hl_live_check --key-file secrets/testnet.env --coin ETH --flatten
 ```
 
 All quoter options are listed by `--help` and in [TESTNET.md](TESTNET.md#4-run-the-demo); account setup is
@@ -246,7 +255,9 @@ removed by the venue automatically.
 
 ## 11. Production checklist
 
+- [ ] `hl_live_check --taker` passes against the target network with the production configuration
 - [ ] Separate agent wallet per environment and per process; keys outside images and repositories
+- [ ] `accountAddress` is the **master** account of the agent wallet (the client logs a mismatch at start-up)
 - [ ] Tested on testnet with the same binary and configuration
 - [ ] `scheduleCancel` dead-man's switch refreshed by the strategy
 - [ ] Position and loss limits enforced in the strategy (the connector does not impose risk limits)

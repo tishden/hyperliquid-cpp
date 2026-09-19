@@ -227,6 +227,22 @@ void InfoClient::orderStatus(const Address& user, std::uint64_t oid, Callback<Or
     request<OrderStatusInfo>(http_, std::move(body), std::move(callback), parseOrderStatus);
 }
 
+void InfoClient::userRole(const Address& user, Callback<UserRole> callback) {
+    request<UserRole>(http_, userRequest("userRole", user), std::move(callback),
+                      [](const json::Value& root) -> Result<UserRole> {
+                          if (!root.isObject()) {
+                              return Error{Error::Kind::Parse, 0, "userRole: unexpected response"};
+                          }
+                          UserRole out;
+                          out.role = std::string{root.field("role").asString()};
+                          const auto master = root.field("data").field("user");
+                          if (master.isString()) {
+                              out.master = parseAddress(master.asString());
+                          }
+                          return out;
+                      });
+}
+
 void InfoClient::userFills(const Address& user, Callback<std::vector<Fill>> callback) {
     request<std::vector<Fill>>(http_, userRequest("userFills", user), std::move(callback),
                                [](const json::Value& root) -> Result<std::vector<Fill>> {

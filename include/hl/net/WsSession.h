@@ -69,6 +69,15 @@ public:
     /// Send a raw text frame. Returns false when not connected.
     bool send(std::string_view text);
 
+    /**
+     * @brief Drop the connection now and reconnect immediately (no backoff delay).
+     *
+     * Reports the close to the listener exactly like a spontaneous disconnect, so subscriptions are
+     * replayed and dependent state (readiness, reconciliation) is rebuilt. Useful to move to another
+     * endpoint address, to recover from a suspected half-open socket, and in tests.
+     */
+    void reconnectNow(std::string_view reason = "manual reconnect");
+
     [[nodiscard]] bool isOpen() const noexcept { return ws_.isOpen(); }
     [[nodiscard]] std::uint64_t reconnectCount() const noexcept { return reconnects_; }
     [[nodiscard]] std::int64_t lastMessageMs() const noexcept { return lastRxMs_; }

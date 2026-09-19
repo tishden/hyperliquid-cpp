@@ -61,6 +61,12 @@ placeOrder ────► │ validate ─► order table (cloid → Tracked) �
 "User" is the vault address if one is configured, otherwise the account address (for an agent wallet, the
 master account — never the agent's own address).
 
+**Agent-wallet check.** At start-up the client also queries `{"type":"userRole","user":<signer>}`. If the
+signing key is an API (agent) wallet, the venue reports its master account. With `accountAddress` left empty
+the client adopts that master (and resubscribes the user streams to it); with a different one configured it
+logs an error and calls `ExchangeListener::onError` — otherwise orders would be booked on the master while
+updates, fills and positions were read from the wrong address.
+
 ```mermaid
 sequenceDiagram
     participant S as Strategy
@@ -224,6 +230,12 @@ state     = filledSz ≥ origSz ? Filled : PartiallyFilled      (if not terminal
 ```
 
    followed by `onOrderUpdate`.
+
+**Timing.** The acknowledgement of an immediately executing order reports the fill at once, while the
+`userFills` message that carries the trade id, fee and `startPosition` arrives with the next block — about
+1–2 s later on testnet. `Order::state` and `filledSz` therefore become final before `position(coin)` moves.
+A strategy that sizes on inventory must read the position after the fill callback, not right after the
+acknowledgement.
 
 **Why `max`.** An IOC that fills immediately produces an acknowledgement `filled{totalSz}`, a `filled`
 order update and one or more fills, in any order. Adding them would double count; taking the maximum of "sum of

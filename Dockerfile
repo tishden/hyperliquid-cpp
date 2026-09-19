@@ -29,7 +29,7 @@ RUN cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
     && if [ "${RUN_TESTS}" = "ON" ]; then build/tests/hl_tests --gtest_brief=1; fi \
     && cmake --install build --prefix /opt/hyperliquid-cpp \
     && mkdir -p /opt/hyperliquid-cpp/bin \
-    && install -m 0755 build/examples/hl_testnet_quoter build/examples/hl_book_printer \
+    && install -m 0755 build/examples/hl_testnet_quoter build/examples/hl_book_printer build/examples/hl_live_check \
                        build/benchmarks/hl_benchmarks build/tests/hl_tests /opt/hyperliquid-cpp/bin/
 
 # ── dev: toolchain + built tree (for developing against the library) ────────
