@@ -227,9 +227,9 @@ decimals; sizes have `szDecimals` decimals.
 | Clang 21, ThreadSanitizer (library tests; examples not built) | 184 | all passed, no reports |
 | Docker build stage (Ubuntu 24.04, GCC 13) | 190 | all passed |
 
-**Live check against Hyperliquid mainnet, real money, 2026-09-19.** Twelve instruments covering every
-perp `szDecimals` from 0 to 5, both product types, both transports; every run ended with the account
-flat and no orders left.
+**Live check against Hyperliquid mainnet, real money, 2026-09-19.** Both product types, every perp
+`szDecimals` from 0 to 5, both transports; every run ended with the account flat and no orders
+left.
 
 | Instrument | Kind, szDecimals | What it adds | Result |
 |---|---|---|---|

@@ -3,14 +3,17 @@
 All notable changes to this project are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.4.0] — 2026-09-19
 
 ### Added
 - `docs/COMPARISON.md` — a side-by-side with the free MIT-licensed C++ SDK for Hyperliquid, stating
-  where that one is ahead (endpoint breadth, test count, project hygiene, price) as plainly as
-  where this one is (the stateful trading layer above a transport SDK, engineered latency, three
-  private dependencies, live mainnet verification, warranty and maintenance). A condensed version
-  is now a section of the Russian offer PDF, which grew to four pages.
+  where that one is ahead (endpoint breadth, price) as plainly as where this one is: the stateful
+  trading layer above a transport SDK, engineered latency, three private dependencies, live mainnet
+  verification, warranty and maintenance. A condensed version is a section of the Russian offer PDF.
+- `scripts/ci.sh` — one command for everything that must be green before a release: the compiler and
+  sanitizer matrix, documentation link checking, a scan for keys and absolute paths in tracked
+  files, and a version/changelog consistency check. Toolchains the machine lacks are skipped rather
+  than failed. `scripts/check-docs.py` does the link checking and is usable on its own.
 - Copyright and `SPDX-License-Identifier: LicenseRef-hyperliquid-cpp` headers in every source file,
   script, CMake file and the Dockerfile; the licence files and the documentation now name the
   copyright holder.

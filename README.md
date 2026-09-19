@@ -20,7 +20,7 @@ order management and EIP-712 signing — in one dependency-light static library.
 | **Signing** | byte-identical to the official Python SDK (golden-vector tested) · optional precomputed-nonce ECDSA: 0.17 µs per signature · agent (API) wallets · vaults / sub-accounts · `expiresAfter` |
 | **Venue rules** | asset ids resolved from `meta`/`spotMeta` · exact price (5 significant figures) and size rounding |
 | **Engineering** | exact fixed-point decimals (no floating point on the wire path) · single-threaded epoll reactor, re-entrancy-safe callbacks · 190 tests incl. end-to-end against a mock venue and a 17-step live acceptance run · ASan/UBSan/TSan clean · GCC 11/15, Clang 21 · `-Werror` |
-| **Not a general SDK** | this is a stateful trading client — order table, book, positions, reconciliation — not a thin endpoint wrapper. A free MIT SDK with far wider endpoint coverage exists; the honest side-by-side, including where it wins, is in [docs/COMPARISON.md](docs/COMPARISON.md) |
+| **Not a general SDK** | a stateful trading client — order table, book, positions, reconciliation — not a thin endpoint wrapper. A free MIT SDK with wider endpoint coverage exists; the side-by-side, including where it wins, is in [docs/COMPARISON.md](docs/COMPARISON.md) |
 | **Not included, by design** | the library cannot move funds: withdrawals, transfers and staking need EIP-712 user-signed actions it does not implement, so a compromised strategy process cannot drain the account ([docs/COVERAGE.md](docs/COVERAGE.md)) |
 
 ## Performance
@@ -37,10 +37,11 @@ Measured on a 2012 Intel i7-3820, single core, Clang 21 `-O3` (current server co
 | Exact decimal parse (vs `strtod` 101 ns) | **19 ns** |
 | Order → signed WebSocket frame (msgpack, Keccak, EIP-712, ECDSA) | 42 µs → **3.3 µs** with precomputed nonces |
 
-Verified: 190 tests on Clang 21 / GCC 11 / GCC 15, ASan+UBSan and ThreadSanitizer clean, plus scripted live
-acceptance runs — **17/17 steps on testnet perps** and **twelve instruments on mainnet with real money** (every perp `szDecimals` from 0 to 5, spot and perps, both transports) (resting
-orders, amendments, cancels, batches, post-only rejection, real taker fills with fees, `expiresAfter`, forced
-reconnect with reconciliation) over both WebSocket and HTTP — see
+Verified: 190 tests on Clang 21 / GCC 11 / GCC 15, ASan+UBSan and ThreadSanitizer clean, plus scripted
+live acceptance runs — **17/17 steps on testnet perps** and **perps and spot on mainnet with real
+money**, covering every size precision the venue uses, over both WebSocket and HTTP: resting orders,
+amendments, cancels, batches, post-only rejection, real taker fills with fees, `expiresAfter` and a
+forced reconnect with reconciliation. See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#verification-matrix) and a full mainnet log in
 [docs/RUNNING.md §4](docs/RUNNING.md#4-acceptance-run-against-a-live-venue).
 
@@ -56,6 +57,7 @@ simdjson are fetched and built statically).
 ```bash
 scripts/build.sh release           # or: cmake --preset release && cmake --build --preset release
 scripts/test.sh release            # 190 tests, ~5 s
+scripts/ci.sh                      # everything: compilers, sanitizers, doc links, secret scan
 build/release/examples/hl_book_printer BTC ETH SOL
 build/release/examples/hl_testnet_quoter --dry-run --coin ETH
 ```
@@ -233,10 +235,10 @@ looks like: [docs/RUNNING.md §4](docs/RUNNING.md#4-acceptance-run-against-a-liv
 | [docs/SIGNING.md](docs/SIGNING.md) | Exact Hyperliquid L1-action signing specification with worked vectors; precomputed-nonce ECDSA |
 | [docs/TESTNET.md](docs/TESTNET.md) | Testnet account, API wallet, running and reading the demo |
 | [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Benchmark results and how to reproduce them |
-| [docs/COMPARISON.md](docs/COMPARISON.md) | Side-by-side with the free open-source C++ SDK: what each one is, where it is ahead, where this one is, and how to choose |
+| [docs/COMPARISON.md](docs/COMPARISON.md) | Side-by-side with the free open-source C++ SDK: what each one is, where it is ahead and where this one is |
 | [docs/LICENSING.md](docs/LICENSING.md) | The licence in plain language: what you may and may not do, warranties, FAQ, pre-signature checklist |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
-| [docs/hyperliquid-cpp-offer-ru.pdf](docs/hyperliquid-cpp-offer-ru.pdf) | Коммерческое предложение (RU) — what is being sold, in three pages. Source: [docs/offer-ru.html](docs/offer-ru.html), rebuild with `scripts/offer-pdf.sh` |
+| [docs/hyperliquid-cpp-offer-ru.pdf](docs/hyperliquid-cpp-offer-ru.pdf) | Коммерческое предложение (RU) — what is being sold, in four pages. Source: [docs/offer-ru.html](docs/offer-ru.html), rebuild with `scripts/offer-pdf.sh` |
 
 Doxygen HTML: `scripts/docs.sh`.
 
@@ -244,7 +246,7 @@ Doxygen HTML: `scripts/docs.sh`.
 
 ```cmake
 include(FetchContent)
-FetchContent_Declare(hyperliquid_cpp GIT_REPOSITORY <your-licensed-repo-url> GIT_TAG v1.3.0)
+FetchContent_Declare(hyperliquid_cpp GIT_REPOSITORY <your-licensed-repo-url> GIT_TAG v1.4.0)
 FetchContent_MakeAvailable(hyperliquid_cpp)      # or: add_subdirectory(third_party/hyperliquid-cpp)
 target_link_libraries(my_bot PRIVATE hyperliquid::hyperliquid)
 ```
@@ -264,7 +266,7 @@ tests/               unit, golden-vector and end-to-end tests; support/MockVenue
 benchmarks/          Google Benchmark suite
 examples/            book_printer/, testnet_quoter/
 docs/                reference and guides
-scripts/             build.sh, test.sh, bench.sh, docs.sh
+scripts/             build.sh, test.sh, bench.sh, docs.sh, ci.sh, check-docs.py, offer-pdf.sh
 ```
 
 ## Licence

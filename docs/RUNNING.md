@@ -212,7 +212,7 @@ Three venue behaviours the run makes concrete, all of them surprises for someone
 
 ### Same run, other instruments
 
-Twelve instruments were run this way on mainnet, covering every perp `szDecimals` from 0 to 5, both
+Runs like this were made on mainnet across perps and spot, covering every perp `szDecimals`, both
 product types and both transports — see the table in
 [ARCHITECTURE.md](ARCHITECTURE.md#verification-matrix). Every run ended flat with no orders left.
 The interesting ones:
