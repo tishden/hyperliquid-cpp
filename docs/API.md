@@ -957,7 +957,7 @@ enum class ActionTransport : std::uint8_t { WebSocket, Http };
 | `requestTimeoutMs` | `std::int64_t` | `10000` | Deadline for a **WebSocket** post response. On expiry the action fails with `Timeout` and affected orders are reconciled. (HTTP actions use `http.requestTimeoutMs`.) |
 | `loadSpotAssets` | `bool` | `false` | Also load `spotMeta`, so spot pairs can be traded, **and** seed spot balances from `spotClearinghouseState`. Adds one `/info` round-trip to start-up; readiness waits for it. |
 | `subscribeUserEvents` | `bool` | `true` | Also subscribe to `userEvents`. This is the only source of `onLiquidation` and of venue-initiated cancels; leave it on unless you are minimising the private stream. |
-| `adoptExistingOrders` | `bool` | `true` | At start-up, take over the orders the venue already has open for this account ([§5.5](#55-exchangeclient)) |
+| `adoptExistingOrders` | `bool` | `true` | Take over the orders the venue already has open for this account — at start-up, and after a reconnect for any open order the table cannot account for ([§5.5](#55-exchangeclient)) |
 | `builderFee` | `std::optional<BuilderFee>` | none | Builder code added to every order action that does not pass one explicitly. Requires a one-time `approveBuilderFee` from the master account (not provided by this SDK, see [§6.4](#64-wire-structs)). |
 | `fastCancels` | `bool` | `true` | Send cancels with the venue's `fast` flag. Trigger orders are always cancelled without it — the venue rejects fast cancels for them. |
 | `actionExpiryMs` | `std::int64_t` | `0` (off) | Attach `expiresAfter = now + actionExpiryMs` to every signed action. The venue drops an action that arrives later — a per-action dead-man's switch for a network stall. Applies to both transports. **An action rejected for a stale `expiresAfter` costs 5× the usual address rate-limit budget**, so do not set this below your worst-case round-trip. |
@@ -1196,7 +1196,10 @@ order with a cloid is treated as one of ours, one without gets the synthetic
 `Cloid{0xFFFFFFFFFFFFFFFF, oid}`), `filledSz = origSz − sz`, state `Open` or `PartiallyFilled`, and
 `createdMs` = the venue timestamp. Each adoption fires `onOrderUpdate`. Only `isTrigger` is recovered, not the
 `TriggerSpec` itself. A failure to list is logged as a warning and does not block readiness. On **later** readys
-(after a reconnect) the client reconciles the existing table instead ([§5.2](#52-orderstate-and-the-order-state-machine)).
+(after a reconnect) the client reconciles the existing table against the same listing and adopts, on the same
+terms, anything in it that matches no tracked order — an order whose acknowledgement went down with the socket
+would otherwise rest on the venue with nothing managing it
+([§5.2](#52-orderstate-and-the-order-state-machine)).
 
 **Agent-wallet detection.** `start()` also queries `{"type":"userRole","user":<signer>}`. If the signing key is
 an API (agent) wallet and `accountAddress` was left empty, the client adopts the master account the venue

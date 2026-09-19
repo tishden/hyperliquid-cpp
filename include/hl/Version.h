@@ -6,7 +6,7 @@ namespace hl {
 
 inline constexpr int kVersionMajor = 1;
 inline constexpr int kVersionMinor = 4;
-inline constexpr int kVersionPatch = 0;
-inline constexpr const char* kVersionString = "1.4.0";
+inline constexpr int kVersionPatch = 1;
+inline constexpr const char* kVersionString = "1.4.1";
 
 }  // namespace hl

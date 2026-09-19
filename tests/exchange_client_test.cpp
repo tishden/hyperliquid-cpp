@@ -375,7 +375,9 @@ TEST_F(ExchangeClientTest, FailedCancelIsReconciled) {
         }
         return {};
     };
-    fake.orderStatusByKey[cloid.toString()] =
+    // An acknowledged order is probed by its oid — a cloid probe answers about the first
+    // generation of the order, which after an amendment is no longer the live one.
+    fake.orderStatusByKey[std::to_string(client->findOrder(cloid)->oid)] =
         R"({"status":"order","order":{"order":{"coin":"BTC","side":"B","limitPx":"50000.0","sz":"0.0","oid":1000,"timestamp":1,)"
         R"("origSz":"0.002","cloid":")" + cloid.toString() + R"("},"status":"filled","statusTimestamp":2}})";
     ASSERT_FALSE(client->cancel(cloid));
@@ -490,7 +492,7 @@ TEST_F(ExchangeClientTest, ReconnectReconcilesLiveOrders) {
     const auto cloid = client->placeOrder(btcBuy()).value();
     ASSERT_TRUE(runUntil(loop, [&] { return client->findOrder(cloid)->state == OrderState::Open; }));
 
-    fake.orderStatusByKey[cloid.toString()] =
+    fake.orderStatusByKey[std::to_string(client->findOrder(cloid)->oid)] =
         R"({"status":"order","order":{"order":{"coin":"BTC","side":"B","limitPx":"50000.0","sz":"0.002","oid":1000,"timestamp":1,)"
         R"("origSz":"0.002","cloid":")" + cloid.toString() + R"("},"status":"marginCanceled","statusTimestamp":2}})";
     fake.venue.dropWebSockets();
@@ -499,6 +501,46 @@ TEST_F(ExchangeClientTest, ReconnectReconcilesLiveOrders) {
     ASSERT_TRUE(runUntil(loop, [&] { return listener.ready == 2; }));
     ASSERT_TRUE(runUntil(loop, [&] { return client->findOrder(cloid)->state == OrderState::Canceled; }));
     EXPECT_EQ(client->findOrder(cloid)->lastError, "marginCanceled");
+}
+
+// The venue resolves a cloid to the *first* order placed with it, while `modify` carries the cloid
+// over to a new oid: after an amendment an orderStatus-by-cloid probe answers "canceled" about the
+// superseded generation while the live order rests. Reconciliation must not believe it — that marks
+// a working order terminal and leaves it on the venue with nothing tracking it.
+TEST_F(ExchangeClientTest, ReconcileAfterAmendmentProbesByOidNotCloid) {
+    auto statusJson = [](std::uint64_t oid, const std::string& px, const std::string& status,
+                         const std::string& cloid) {
+        return R"({"status":"order","order":{"order":{"coin":"BTC","side":"B","limitPx":")" + px +
+               R"(","sz":"0.002","oid":)" + std::to_string(oid) + R"(,"timestamp":1,"origSz":"0.002","cloid":")" +
+               cloid + R"("},"status":")" + status + R"(","statusTimestamp":2}})";
+    };
+    auto client = startReady();
+    const auto cloid = client->placeOrder(btcBuy()).value();
+    ASSERT_TRUE(runUntil(loop, [&] { return client->findOrder(cloid)->state == OrderState::Open; }));
+    const std::uint64_t firstOid = client->findOrder(cloid)->oid;
+
+    ASSERT_FALSE(client->modify(cloid, d("49000"), d("0.002")));
+    ASSERT_TRUE(runUntil(loop, [&] { return !client->findOrder(cloid)->modifyPending; }));
+    const std::uint64_t liveOid = client->findOrder(cloid)->oid;
+    ASSERT_NE(liveOid, firstOid);
+
+    fake.orderStatusByKey[cloid.toString()] = statusJson(firstOid, "50000.0", "canceled", cloid.toString());
+    fake.orderStatusByKey[std::to_string(liveOid)] = statusJson(liveOid, "49000.0", "open", cloid.toString());
+
+    // A second amendment is lost with the socket, so its outcome is unknown and gets reconciled.
+    fake.autoRespond = false;
+    ASSERT_FALSE(client->modify(cloid, d("48000"), d("0.002")));
+    ASSERT_TRUE(runUntil(loop, [&] { return client->findOrder(cloid)->modifyPending; }));
+    fake.autoRespond = true;
+    fake.venue.dropWebSockets();
+    ASSERT_TRUE(runUntil(loop, [&] { return listener.ready == 2; }));
+    ASSERT_TRUE(runUntil(loop, [&] { return !client->findOrder(cloid)->modifyPending; }));
+
+    const hl::Order* o = client->findOrder(cloid);
+    ASSERT_NE(o, nullptr);
+    EXPECT_TRUE(o->isLive()) << "the order rests on the venue; state is " << hl::toString(o->state);
+    EXPECT_EQ(o->oid, liveOid) << "the tracked oid must not fall back to a superseded generation";
+    EXPECT_EQ(client->liveOrders("BTC").size(), 1U);
 }
 
 TEST_F(ExchangeClientTest, FillsMissedWhileDisconnectedAreApplied) {
@@ -654,6 +696,24 @@ TEST_F(ExchangeClientTest, AdoptsOrdersAlreadyOpenOnTheVenue) {
     // …and it can be canceled like any other order.
     ASSERT_FALSE(client->cancel(o->cloid));
     ASSERT_TRUE(runUntil(loop, [&] { return client->liveOrders("ETH").empty(); }));
+}
+
+// A reconnect is the moment an order can slip out of the table: the acknowledgement that would
+// have named its oid went down with the socket. Whatever the venue still reports open and the
+// client cannot account for must be adopted, not left resting unmanaged.
+TEST_F(ExchangeClientTest, OrdersTheClientLostTrackOfAreAdoptedOnReconnect) {
+    auto client = startReady();
+    ASSERT_TRUE(client->liveOrders("ETH").empty());
+    fake.openOrdersResponse =
+        R"([{"coin":"ETH","side":"A","limitPx":"3000.0","sz":"1.0","oid":4242,"timestamp":1700000000000,)"
+        R"("origSz":"1.0","reduceOnly":false,"orderType":"Limit","tif":"Gtc","isTrigger":false,"triggerPx":"0.0"}])";
+    fake.venue.dropWebSockets();
+    ASSERT_TRUE(runUntil(loop, [&] { return listener.ready == 2; }));
+    ASSERT_TRUE(runUntil(loop, [&] { return !client->liveOrders("ETH").empty(); }));
+    const hl::Order* o = client->liveOrders("ETH").front();
+    EXPECT_EQ(o->oid, 4242U);
+    EXPECT_TRUE(o->external);
+    ASSERT_FALSE(client->cancel(o->cloid)) << "an adopted order must be cancelable";
 }
 
 // Readiness must not be announced before the start-up listing of existing orders has been applied:

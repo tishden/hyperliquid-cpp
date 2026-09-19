@@ -3,7 +3,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(hyperliquid-cpp
-    VERSION 1.3.0
+    VERSION 1.4.1
     DESCRIPTION "Low-latency C++ connector for Hyperliquid: market data, order management, EIP-712 signing"
     LANGUAGES CXX C)
 

@@ -258,47 +258,55 @@ void ExchangeClient::adoptOpenOrders() {
             maybeReady();
             return;
         }
-        std::size_t adopted = 0;
-        for (const auto& open : r.value()) {
-            const Cloid cloid = open.cloid.value_or(Cloid{kExternalCloidHigh, open.oid});
-            if (find(cloid) != nullptr || findByOid(open.oid) != nullptr) {
-                continue;
-            }
-            Tracked& t = track(cloid);
-            Order& o = t.order;
-            o.external = !open.cloid.has_value();
-            o.coin = open.coin;
-            if (const AssetInfo* a = assets_.find(open.coin)) {
-                o.asset = a->asset;
-            }
-            o.side = open.side;
-            o.px = open.limitPx;
-            o.origSz = open.origSz;
-            o.filledSz = open.origSz - open.sz;
-            o.reduceOnly = open.reduceOnly;
-            o.isTrigger = open.isTrigger;
-            if (open.isTrigger) {
-                // Reconstruct enough of the trigger that modify() does not turn the order into a
-                // plain limit order. The venue reports the kind only through `orderType`.
-                TriggerSpec trigger;
-                trigger.triggerPx = open.triggerPx;
-                trigger.isMarket = open.orderType.find("Market") != std::string::npos;
-                trigger.kind = open.orderType.find("Take Profit") != std::string::npos
-                                   ? TriggerSpec::Kind::TakeProfit
-                                   : TriggerSpec::Kind::StopLoss;
-                o.trigger = trigger;
-            }
-            o.state = o.filledSz.isZero() ? OrderState::Open : OrderState::PartiallyFilled;
-            o.createdMs = open.timestampMs;
-            setOid(t, open.oid);
-            ++adopted;
-            emit(t);
-        }
+        const std::size_t adopted = adoptFromListing(r.value());
         if (adopted != 0) {
             logf(LogLevel::Info, "exchange: adopted %zu order(s) already open on the venue", adopted);
         }
         maybeReady();
     });
+}
+
+// Track every order the venue reports open that this client does not know about. Used at start-up
+// (orders left by a previous process or placed in the UI) and after a reconnect, where an order
+// whose acknowledgement was lost with the socket would otherwise rest unmanaged.
+std::size_t ExchangeClient::adoptFromListing(const std::vector<OpenOrder>& openOrders) {
+    std::size_t adopted = 0;
+    for (const auto& open : openOrders) {
+        const Cloid cloid = open.cloid.value_or(Cloid{kExternalCloidHigh, open.oid});
+        if (find(cloid) != nullptr || findByOid(open.oid) != nullptr) {
+            continue;
+        }
+        Tracked& t = track(cloid);
+        Order& o = t.order;
+        o.external = !open.cloid.has_value();
+        o.coin = open.coin;
+        if (const AssetInfo* a = assets_.find(open.coin)) {
+            o.asset = a->asset;
+        }
+        o.side = open.side;
+        o.px = open.limitPx;
+        o.origSz = open.origSz;
+        o.filledSz = open.origSz - open.sz;
+        o.reduceOnly = open.reduceOnly;
+        o.isTrigger = open.isTrigger;
+        if (open.isTrigger) {
+            // Reconstruct enough of the trigger that modify() does not turn the order into a
+            // plain limit order. The venue reports the kind only through `orderType`.
+            TriggerSpec trigger;
+            trigger.triggerPx = open.triggerPx;
+            trigger.isMarket = open.orderType.find("Market") != std::string::npos;
+            trigger.kind = open.orderType.find("Take Profit") != std::string::npos
+                               ? TriggerSpec::Kind::TakeProfit
+                               : TriggerSpec::Kind::StopLoss;
+            o.trigger = trigger;
+        }
+        o.state = o.filledSz.isZero() ? OrderState::Open : OrderState::PartiallyFilled;
+        o.createdMs = open.timestampMs;
+        setOid(t, open.oid);
+        ++adopted;
+        emit(t);
+    }
+    return adopted;
 }
 
 void ExchangeClient::resubscribeUser() {
@@ -1253,6 +1261,14 @@ void ExchangeClient::onUserFills(const UserFillsMsg& msg) {
 
 void ExchangeClient::reconcile(const Cloid& cloid) {
     ++stats_.reconciles;
+    // Probe by oid whenever the order has one. A cloid probe is answered with the *first* order
+    // placed under that cloid, while `modify` carries the cloid over to a new oid — so after an
+    // amendment the venue reports the superseded generation ("canceled") for a cloid whose live
+    // order is resting. Believing that marks a working order terminal and leaks it: it stays on
+    // the venue with nothing tracking it. The oid is unambiguous; the cloid is only the fallback
+    // for an order whose acknowledgement never arrived.
+    const Order* known = findOrder(cloid);
+    const std::uint64_t probeOid = known != nullptr ? known->oid : 0;
     auto apply = [this, cloid](const Result<OrderStatusInfo>& r) {
         Tracked* t = find(cloid);
         if (t == nullptr) {
@@ -1283,13 +1299,20 @@ void ExchangeClient::reconcile(const Cloid& cloid) {
             }
             return;
         }
+        if (o.oid != 0 && info.order.oid != 0 && info.order.oid != o.oid) {
+            // The answer is about a generation this order has already replaced (see above) or one
+            // it has not adopted yet. Neither says anything about the oid we are tracking.
+            logf(LogLevel::Debug, "exchange: reconcile %s answered about oid %llu, tracking %llu — ignored",
+                 cloid.toString().c_str(), static_cast<unsigned long long>(info.order.oid),
+                 static_cast<unsigned long long>(o.oid));
+            return;
+        }
         setOid(*t, info.order.oid);
         applyVenueStatus(*t, info.status, info.statusText, info.order.limitPx, info.order.origSz);
         emit(*t);
     };
-    const Order* o = findOrder(cloid);
-    if (o != nullptr && o->external) {
-        info_.orderStatus(user_, o->oid, apply);
+    if (probeOid != 0) {
+        info_.orderStatus(user_, probeOid, apply);
     } else {
         info_.orderStatus(user_, cloid, apply);
     }
@@ -1302,8 +1325,8 @@ void ExchangeClient::reconcileAll() {
             live.push_back(cloid);
         }
     }
-    if (live.empty()) {
-        return;
+    if (live.empty() && !config_.adoptExistingOrders) {
+        return;  // nothing to settle, and orders of unknown origin are not this client's business
     }
     // One list query settles every order the venue still has open; only the ones missing from it
     // need an individual orderStatus probe (they were filled, canceled or never accepted).
@@ -1340,6 +1363,14 @@ void ExchangeClient::reconcileAll() {
         }
         for (const auto& cloid : unresolved) {
             reconcile(cloid);
+        }
+        // An order the venue reports open that this client no longer knows about is unmanaged
+        // risk — typically one whose acknowledgement went down with the socket. Adopt it here so
+        // it appears in liveOrders() and cancelAll() instead of resting unnoticed.
+        if (config_.adoptExistingOrders) {
+            if (const std::size_t adopted = adoptFromListing(r.value()); adopted != 0) {
+                logf(LogLevel::Warn, "exchange: adopted %zu open order(s) the client had lost track of", adopted);
+            }
         }
     });
 }

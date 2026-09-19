@@ -305,11 +305,21 @@ the order continuous:
 
 ## 10. Reconciliation
 
-`reconcile(cloid)` queries `/info {"type":"orderStatus","user":…,"oid":"0x<cloid>"}` (by numeric oid for
-external orders) and applies the answer like an order update.
+`reconcile(cloid)` queries `/info {"type":"orderStatus","user":…,"oid":<oid>}` with the **oid** of the
+order whenever one is known, and falls back to `"oid":"0x<cloid>"` only for an order whose
+acknowledgement never arrived and which therefore has no oid yet.
+
+> **Why not always by cloid.** The venue resolves a cloid to the *first* order placed with it, while
+> `modify` carries the cloid over to a new oid. After an amendment a cloid probe therefore answers
+> `canceled` about the superseded generation while the live order is resting. Believing that marks a
+> working order terminal and leaks it: the strategy stops managing an order that is still on the
+> venue. An answer about an oid other than the tracked one is ignored for the same reason.
 
 After a reconnect the client asks for the whole list first (`frontendOpenOrders`) and only probes the orders
-missing from it individually — one request instead of one per live order.
+missing from it individually — one request instead of one per live order. Anything in that list the client
+cannot account for is **adopted** (when `adoptExistingOrders` is set, the default): an order whose
+acknowledgement went down with the socket then reappears in `liveOrders()` and `cancelAll()` instead of
+resting unmanaged.
 
 | Trigger | Why |
 |---|---|
@@ -317,6 +327,7 @@ missing from it individually — one request instead of one per live order.
 | cancel acknowledged with an error | filled or canceled? |
 | modify failed or was interrupted | which version of the order is live? |
 | client became ready again after a reconnect | anything may have happened while disconnected |
+| an open order on the venue matches nothing in the table | it is adopted, not ignored |
 
 | Venue answer | Effect |
 |---|---|

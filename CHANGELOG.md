@@ -3,6 +3,29 @@
 All notable changes to this project are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## [1.4.1] — 2026-09-20
+
+### Fixed
+- **A resting order could be dropped from the table and left working on the venue.** Reconciliation
+  probed `orderStatus` by **cloid**, and the venue resolves a cloid to the *first* order placed with
+  it while `modify` carries the cloid over to a new oid: after an amendment the probe answered
+  `canceled` about the superseded generation. The client believed it, marked the live order terminal
+  and rewrote its oid to the dead one; the strategy freed the quote slot and placed a new order while
+  the real one kept resting — unmanaged, and still able to fill. Reconciliation now probes by oid
+  whenever the order has one (cloid remains the fallback for an order whose acknowledgement never
+  arrived) and ignores an answer about any other oid. Found by an eight-hour testnet soak: the venue
+  closes idle WebSockets every few minutes (`code 1000: Expired`), and every drop with an amendment in
+  flight leaked one order.
+- After a reconnect, an open order on the venue that matches nothing in the table is now **adopted**
+  (`adoptExistingOrders`, on by default) instead of being ignored, so an order whose acknowledgement
+  was lost with the socket reappears in `liveOrders()` and is covered by `cancelAll()`. The listing is
+  fetched even when the table holds no live orders — the case where a lost order is invisible.
+- `CMakeLists.txt` and `Doxyfile` still declared 1.3.0 while the library reported 1.4.0.
+
+### Documentation
+- `docs/ORDER_MANAGEMENT.md` §10 states why reconciliation cannot use the cloid after an amendment,
+  and that unaccounted open orders are adopted on reconnect.
+
 ## [1.4.0] — 2026-09-19
 
 ### Added
