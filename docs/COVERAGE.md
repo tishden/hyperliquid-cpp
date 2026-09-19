@@ -158,6 +158,19 @@ The reasoning for leaving them out is not only cost:
   transfer at all. Implementing these actions would only be useful with a master key in the process, which is
   exactly the configuration a trading process should never have. Keeping them out keeps the worst outcome of a
   compromised trading host bounded by what an agent key can do: place and cancel orders.
+
+  This is not an assumption. A `usdClassTransfer` signed by an approved agent wallet and sent to mainnet on
+  2026-09-19 was refused with:
+
+  ```text
+  {"status":"err","response":"Must deposit before performing actions. User: 0x…<the agent's own address>"}
+  ```
+
+  Note *whose* address the venue names. An L1 action signed by an agent resolves, through the phantom-agent
+  scheme, to the master account it was approved for; a user-signed action does not — it acts on the signer's
+  own account, which for an agent wallet is empty and has never been funded. There is no "on behalf of" for
+  this class of action. So implementing transfers here would not merely be risky, it would be **useless** in
+  the deployment the library recommends.
 - **Frequency.** They are operational, not algorithmic. Moving collateral happens at human cadence, and the UI
   or the Python SDK does it safely.
 
