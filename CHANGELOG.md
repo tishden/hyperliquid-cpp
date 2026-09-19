@@ -15,6 +15,16 @@ All notable changes to this project are documented here. The project follows
   sends, so a subscription made with `nSigFigs` or `fast` can be reproduced for `unsubscribeRaw`.
 
 ### Changed
+- All third-party dependencies are now `PRIVATE` in CMake, OpenSSL included. No public header
+  includes one — they appear in the API only as opaque forward declarations — so consumers link
+  them transitively but no longer inherit their include paths and cannot accidentally compile
+  against a different OpenSSL than the library was built with. Verified with an out-of-tree
+  consumer project. The test target now declares its own direct use of OpenSSL (`scalar_test`
+  cross-checks the mod-n arithmetic against BIGNUM) instead of inheriting it.
+- `THIRD_PARTY_NOTICES.md` now states what each dependency is actually used for: libsecp256k1 does
+  all elliptic-curve point arithmetic (address derivation, `R = k·G` per precomputed nonce, and the
+  RFC 6979 fallback), not only the signing the entry previously named, and OpenSSL covers TLS,
+  the RFC 6455 handshake hash, the CSPRNG and the signer's HMAC.
 - `unsubscribeRaw` now drops a maintained book by matching the exact subscription string — the rule
   `WsSession::unsubscribe` already used — instead of scanning the JSON for a coin name.
 - `subscribeL2Book` warns when a coin already has a different `l2Book` subscription: both arrive on

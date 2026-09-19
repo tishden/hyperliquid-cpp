@@ -57,9 +57,13 @@ target_include_directories(hyperliquid
             $<INSTALL_INTERFACE:include>
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
+# Every third-party dependency is PRIVATE: no public header includes one, they appear in the API
+# only as opaque forward declarations (`struct ssl_ctx_st`, `struct secp256k1_context_struct`).
+# Consumers still link them transitively (CMake keeps PRIVATE deps of a static library as
+# LINK_ONLY), but they do not inherit the include paths and cannot accidentally compile against
+# a version of OpenSSL or simdjson the library was not built with.
 target_link_libraries(hyperliquid
-    PUBLIC  OpenSSL::SSL OpenSSL::Crypto
-    PRIVATE hl_secp256k1 hl_simdjson)
+    PRIVATE OpenSSL::SSL OpenSSL::Crypto hl_secp256k1 hl_simdjson)
 
 set(HL_WARNING_FLAGS -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wno-sign-conversion
                      -Wnon-virtual-dtor -Wold-style-cast -Wcast-align -Woverloaded-virtual)

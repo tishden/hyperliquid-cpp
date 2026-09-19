@@ -5,8 +5,8 @@ configure time (or taken from the system) and are **not** modified.
 
 | Component | Version | License | Used for | Linked |
 |---|---|---|---|---|
-| [OpenSSL](https://www.openssl.org/) | ≥ 3.0 (system) | Apache-2.0 | TLS, SHA-1 (WebSocket handshake), CSPRNG | dynamic/system |
-| [libsecp256k1](https://github.com/bitcoin-core/secp256k1) | 0.6.0 | MIT | ECDSA signing (recoverable, RFC 6979) | static, private |
+| [OpenSSL](https://www.openssl.org/) | ≥ 3.0 (system) | Apache-2.0 | TLS (`TlsStream`); SHA-1 for the `Sec-WebSocket-Accept` handshake, which RFC 6455 mandates; CSPRNG for WebSocket frame masks and cloids; HMAC-SHA256 and secret wiping in the signer | dynamic/system, private |
+| [libsecp256k1](https://github.com/bitcoin-core/secp256k1) | 0.6.0 | MIT | All elliptic-curve point arithmetic: public key and address derivation at start-up, `R = k·G` for each precomputed nonce, and recoverable RFC 6979 signing as the fallback when the nonce pool is empty. Not called on the hot signing path, which is our own mod-n scalar arithmetic. | static, private |
 | [simdjson](https://github.com/simdjson/simdjson) | 3.12.3 | Apache-2.0 | JSON parsing | static, private |
 | [GoogleTest](https://github.com/google/googletest) | 1.11+ | BSD-3-Clause | tests only | not shipped |
 | [Google Benchmark](https://github.com/google/benchmark) | 1.8+ | Apache-2.0 | benchmarks only | not shipped |

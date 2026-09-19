@@ -76,8 +76,10 @@ hyperliquid-cpp is a self-contained C++20 connector for Hyperliquid:
   position tracking and automatic reconciliation.
 - **Transport** — a single-threaded epoll reactor, non-blocking TLS, RFC 6455 WebSocket, HTTP/1.1 keep-alive.
 
-Everything lives in namespace `hl`. External dependencies visible in public headers: the C++ standard library and
-OpenSSL forward declarations only. simdjson and libsecp256k1 are linked privately.
+Everything lives in namespace `hl`. No third-party header is visible in a public header: the API uses the C++
+standard library plus two opaque forward declarations (`struct ssl_ctx_st`, `struct secp256k1_context_struct`).
+OpenSSL, simdjson and libsecp256k1 are all linked privately, so they are resolved for you at link time but their
+include paths are not added to your target.
 
 ### 1.1 Headers
 

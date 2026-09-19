@@ -182,9 +182,10 @@ target_link_libraries(my_bot PRIVATE hyperliquid::hyperliquid)
 ```
 
 As a sub-project only the library is built (tests, benchmarks, examples and `-Werror` are off).
-simdjson and libsecp256k1 are private, statically linked implementation details — their headers
-never reach your code. `cmake --install` places headers, `libhyperliquid.a`, `libsecp256k1.a` and
-`libsimdjson.a` for non-CMake builds (link all three plus OpenSSL).
+Every dependency is private — OpenSSL, simdjson and libsecp256k1 — so their headers never reach
+your code and your target does not inherit their include paths; CMake still links them for you.
+`cmake --install` places headers, `libhyperliquid.a`, `libsecp256k1.a` and `libsimdjson.a` for
+non-CMake builds (link all three plus OpenSSL).
 
 ## Repository layout
 

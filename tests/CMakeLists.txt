@@ -30,7 +30,11 @@ add_executable(hl_tests)
 foreach(t ${HL_UNIT_TESTS})
     target_sources(hl_tests PRIVATE ${t}.cpp)
 endforeach()
-target_link_libraries(hl_tests PRIVATE hyperliquid hl_test_support hl_secp256k1 GTest::gtest GTest::gtest_main)
+# hl_secp256k1 and OpenSSL are private to the library; the tests use them directly — nonce_pool_test
+# drives the secp256k1 context, scalar_test cross-checks our mod-n arithmetic against BIGNUM — so
+# they declare those dependencies themselves rather than inheriting them.
+target_link_libraries(hl_tests PRIVATE hyperliquid hl_test_support hl_secp256k1 OpenSSL::Crypto
+                                       GTest::gtest GTest::gtest_main)
 target_include_directories(hl_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_compile_definitions(hl_tests PRIVATE HL_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 hl_target_defaults(hl_tests)
