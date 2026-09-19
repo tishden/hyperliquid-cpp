@@ -27,10 +27,26 @@ struct MarketDataConfig {
     bool applyBboToBooks{true};
 };
 
-/// Optional server-side aggregation of an `l2Book` subscription.
+/// Optional server-side variants of an `l2Book` subscription.
 struct L2BookOptions {
     std::optional<int> nSigFigs{};  ///< 2..5 — aggregate levels to N significant figures
     std::optional<int> mantissa{};  ///< 1, 2 or 5 — only with nSigFigs == 5
+    /**
+     * @brief `fast` — the venue's 5-level publish path instead of the 20-level one.
+     *
+     * Channel, frame shape and parsing are identical to a normal `l2Book`, so `book(coin)` is
+     * maintained exactly as before, just five levels deep. Despite the name this is a **rate**
+     * difference, not a latency one: measured on mainnet BTC and ETH on 2026-09-19, snapshots
+     * arrive about every 0.54 s against about 5.3 s for the 20-level feed, while matching
+     * snapshots of the two feeds by venue timestamp showed no consistent delivery lead either
+     * way. Take it to keep levels 2..5 fresh; keep the default subscription when
+     * `cumulativeSize` / `vwapForSize` need levels 6..20, and remember `bbo` (~7 messages per
+     * second) is still the fastest source for the top of book.
+     *
+     * Omitted from the subscription JSON when false, so existing subscription strings are
+     * unchanged byte for byte.
+     */
+    bool fast{false};
 };
 
 /**
@@ -88,7 +104,7 @@ public:
     /// `bbo` — every best bid/offer change.
     void subscribeBbo(std::string_view coin);
     /// Convenience: `l2Book` + `bbo`.
-    void subscribeBook(std::string_view coin);
+    void subscribeBook(std::string_view coin, L2BookOptions options = {});
     /// `trades` — public trades (including liquidations).
     void subscribeTrades(std::string_view coin);
     /// `activeAssetCtx` — funding, mark, oracle, open interest.
@@ -115,6 +131,9 @@ public:
 
     /// The subscription object a typed helper sends, e.g. `subscriptionJson("trades", "BTC")`.
     [[nodiscard]] static std::string subscriptionJson(std::string_view type, std::string_view coin = {});
+    /// The subscription object `subscribeL2Book` sends — pass it to `unsubscribeRaw` to undo a
+    /// subscription made with non-default options.
+    [[nodiscard]] static std::string l2BookSubscriptionJson(std::string_view coin, L2BookOptions options = {});
 
     /// Maintained book for @p coin, or nullptr if not subscribed to `l2Book`.
     [[nodiscard]] const OrderBook* book(std::string_view coin) const noexcept;
@@ -155,11 +174,18 @@ private:
 
     OrderBook* findBook(std::string_view coin) noexcept;
 
+    /// A maintained book together with the exact `l2Book` subscription string that feeds it,
+    /// so `unsubscribeRaw` can drop the book on the same exact-match rule `WsSession` uses.
+    struct BookEntry {
+        std::unique_ptr<OrderBook> book;
+        std::string subscription;
+    };
+
     MarketDataListener& listener_;
     MarketDataConfig config_;
     WsSession session_;
     WsMessageParser parser_;
-    std::vector<std::unique_ptr<OrderBook>> books_;
+    std::vector<BookEntry> books_;
 };
 
 }  // namespace hl

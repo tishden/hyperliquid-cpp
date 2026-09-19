@@ -188,6 +188,52 @@ TEST_F(MarketDataClientTest, UnsubscribingAnL2BookDropsTheMaintainedBook) {
     EXPECT_EQ(md.book("BTC"), nullptr) << "a book nobody feeds must not linger";
 }
 
+// `fast` is a parameter of the l2Book subscription, not a channel of its own: the venue answers on
+// `l2Book` with the same frame shape, only five levels per side instead of twenty.
+TEST_F(MarketDataClientTest, FastL2BookSubscriptionShape) {
+    using hl::L2BookOptions;
+    using hl::MarketDataClient;
+    // Omitted when false, so strings built by earlier versions still match for unsubscribe.
+    EXPECT_EQ(MarketDataClient::l2BookSubscriptionJson("BTC"), R"({"type":"l2Book","coin":"BTC"})");
+    EXPECT_EQ(MarketDataClient::l2BookSubscriptionJson("BTC", L2BookOptions{.fast = false}),
+              MarketDataClient::subscriptionJson("l2Book", "BTC"));
+    EXPECT_EQ(MarketDataClient::l2BookSubscriptionJson("BTC", L2BookOptions{.fast = true}),
+              R"({"type":"l2Book","coin":"BTC","fast":true})");
+    EXPECT_EQ(MarketDataClient::l2BookSubscriptionJson("BTC", L2BookOptions{.nSigFigs = 5, .mantissa = 2, .fast = true}),
+              R"({"type":"l2Book","coin":"BTC","nSigFigs":5,"mantissa":2,"fast":true})");
+}
+
+TEST_F(MarketDataClientTest, FastL2BookMaintainsTheBookAndUnsubscribesByTheSameString) {
+    hl::MarketDataClient md(loop, listener, config());
+    md.subscribeBook("BTC", hl::L2BookOptions{.fast = true});
+    md.start();
+    ASSERT_TRUE(runUntil(loop, [&] { return venue.wsLog.size() == 2; }));
+    EXPECT_EQ(venue.wsLog[0], R"({"method":"subscribe","subscription":{"type":"l2Book","coin":"BTC","fast":true}})");
+    EXPECT_EQ(venue.wsLog[1], R"({"method":"subscribe","subscription":{"type":"bbo","coin":"BTC"}})");
+
+    // A five-level snapshot, as the fast path publishes it.
+    venue.wsBroadcast(
+        R"({"channel":"l2Book","data":{"coin":"BTC","time":1789582828935,"levels":[)"
+        R"([{"px":"75951.0","sz":"0.4","n":1},{"px":"75950.0","sz":"0.8","n":4},{"px":"75949.0","sz":"0.2","n":2},)"
+        R"({"px":"75948.0","sz":"0.1","n":1},{"px":"75945.0","sz":"0.5","n":1}],)"
+        R"([{"px":"75952.0","sz":"0.3","n":2},{"px":"75953.0","sz":"0.6","n":1},{"px":"75954.0","sz":"0.7","n":3},)"
+        R"({"px":"75955.0","sz":"0.9","n":2},{"px":"75956.0","sz":"1.1","n":5}]]}})");
+    ASSERT_TRUE(runUntil(loop, [&] { return listener.snapshots == 1; }));
+    const hl::OrderBook* book = md.book("BTC");
+    ASSERT_NE(book, nullptr);
+    EXPECT_TRUE(book->isValid());
+    EXPECT_EQ(book->bids().size(), 5U) << "the fast path is five levels deep, and the book keeps exactly those";
+    EXPECT_EQ(book->asks().size(), 5U);
+    EXPECT_EQ(book->bestBid()->px, hl::Decimal::parseOrZero("75951.0"));
+
+    // bbo overlays onto a fast book exactly as onto a 20-level one.
+    venue.wsBroadcast(hltest::fixture("bbo_btc.json"));
+    ASSERT_TRUE(runUntil(loop, [&] { return listener.bboUpdates >= 1; }));
+
+    md.unsubscribeRaw(hl::MarketDataClient::l2BookSubscriptionJson("BTC", hl::L2BookOptions{.fast = true}));
+    EXPECT_EQ(md.book("BTC"), nullptr) << "the options-built string must round-trip through unsubscribe";
+}
+
 TEST_F(MarketDataClientTest, UserAndCandleSubscriptions) {
     hl::MarketDataClient md(loop, listener, config());
     const auto user = *hl::parseAddress("0x14791697260e4c9a71f18484c9f997b308e59325");

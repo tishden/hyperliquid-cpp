@@ -3,6 +3,7 @@
 //
 //   ./hl_book_printer BTC ETH SOL            # mainnet
 //   ./hl_book_printer --testnet BTC
+//   ./hl_book_printer --fast BTC              # 5-level l2Book at ~10x the snapshot rate
 
 #include <csignal>
 #include <cstdio>
@@ -63,11 +64,14 @@ void schedulePrint(hl::EventLoop& loop, Printer& printer, hl::MarketDataClient& 
 int main(int argc, char** argv) {
     std::setvbuf(stdout, nullptr, _IOLBF, 0);
     hl::MarketDataConfig cfg;
+    hl::L2BookOptions bookOptions;
     std::vector<std::string> coins;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--testnet") {
             cfg.network = hl::Network::Testnet;
+        } else if (a == "--fast") {
+            bookOptions.fast = true;
         } else {
             coins.push_back(a);
         }
@@ -82,7 +86,7 @@ int main(int argc, char** argv) {
     Printer printer;
     hl::MarketDataClient md(loop, printer, cfg);
     for (const auto& c : coins) {
-        md.subscribeBook(c);
+        md.subscribeBook(c, bookOptions);
         md.subscribeTrades(c);
         md.subscribeAssetCtx(c);
     }

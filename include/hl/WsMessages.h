@@ -26,7 +26,8 @@ struct BookLevel {
     std::uint32_t n{};  ///< number of resting orders at this level
 };
 
-/// `l2Book` channel — full snapshot of the top of the book (up to 20 levels per side).
+/// `l2Book` channel — full snapshot of the top of the book: up to 20 levels per side, or 5 when
+/// the subscription sets `fast` (see `L2BookOptions::fast`).
 struct L2BookMsg {
     std::string_view coin{};
     std::int64_t timeMs{};

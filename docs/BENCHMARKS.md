@@ -3,6 +3,7 @@
 - [Environment](#environment)
 - [Order entry: from 43 µs to 3.3 µs](#order-entry-from-43-µs-to-33-µs)
 - [Market data](#market-data)
+  - [How fast the venue actually feeds you](#how-fast-the-venue-actually-feeds-you)
 - [Order book](#order-book)
 - [Decimals](#decimals)
 - [Cryptography](#cryptography)
@@ -111,6 +112,29 @@ size, dispatch to the handler.
 | `Parse_L2Book_20x20` | 1.6 KB | 3.97 µs | 385 MiB/s |
 | `Parse_Trades_30` | 8.3 KB | 8.28 µs | 958 MiB/s |
 | `Parse_MainnetSessionReplay` (758 frames: l2Book, bbo, trades, ctx) | 245 KB | 0.465 ms | **514 MiB/s · 1.64 M msg/s** |
+
+### How fast the venue actually feeds you
+
+Parsing is not the constraint on Hyperliquid — the publish rate is. Measured live on mainnet on
+2026-09-19 from a single non-co-located host, 60–120 s per coin on BTC and ETH:
+
+| Feed | Depth | Interval between messages (p50) |
+|---|---|---|
+| `l2Book`, default | 20 levels/side | ~5.3 s |
+| `l2Book`, `fast` ([`L2BookOptions::fast`](API.md#41-marketdataconfig-and-l2bookoptions)) | 5 levels/side | ~0.54 s |
+| `bbo` | best bid/offer | ~7 messages/s (~145 ms) |
+
+Matching snapshots of the two `l2Book` feeds by their venue timestamp showed no consistent delivery
+lead in either direction (within ±100 ms, sign varying between runs and coins), so `fast` buys rate,
+not latency.
+
+**Method.** Two `MarketDataClient`s on one event loop and two connections — one subscribed with
+`L2BookOptions{.fast = true}`, one with the default — recording a steady-clock arrival time and the
+level count for every `onL2Book`, plus `bbo` messages on the second client. Two clients rather than
+one because both subscriptions answer on the same `l2Book` channel and would otherwise share (and
+flip) a single maintained book. Ordinary retail connectivity, no co-location: the intervals are
+venue-side behaviour and should reproduce anywhere, while any absolute one-way delay is not measured
+here at all.
 
 ## Order book
 

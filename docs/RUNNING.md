@@ -285,7 +285,7 @@ removed by the venue automatically.
 | `TLS handshake failed … certificate` | CA bundle not found — `export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt` (Debian/Ubuntu/Alpine) or `/etc/pki/tls/certs/ca-bundle.crt` (RHEL) |
 | `connect … failed on all addresses` | no route / firewall / proxy; test with `curl https://api.hyperliquid.xyz/info` |
 | repeated `ws: … closed` then `connected` | network instability; the client recovers and reconciles — check `reconnectCount()` |
-| `User or API Wallet 0x… does not exist` | agent not authorised on this network, or wrong `accountAddress` — see [TESTNET.md](TESTNET.md#7-troubleshooting) |
+| `User or API Wallet 0x… does not exist` | agent not authorised on this network, or wrong `accountAddress` — see [TESTNET.md](TESTNET.md#8-troubleshooting) |
 | `Invalid nonce` | two processes signing with the same key, or clock far off |
 | orders rejected with `invalid price` | price not rounded with `AssetInfo::roundPx` |
 | no fills / updates although orders rest | `accountAddress` set to the agent instead of the master account |

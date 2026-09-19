@@ -5,15 +5,30 @@ All notable changes to this project are documented here. The project follows
 
 ## [Unreleased]
 
+### Added
+- `L2BookOptions::fast` — subscribe to the venue's 5-level `l2Book` publish path (`subscribeL2Book`
+  and `subscribeBook` both take it; `hl_book_printer --fast` demonstrates it). Measured on mainnet
+  BTC and ETH on 2026-09-19: snapshots ~0.54 s apart against ~5.3 s for the default 20-level feed,
+  with no consistent per-snapshot delivery lead in either direction. `docs/API.md` §4.1 has the
+  numbers and says which of the three feeds to use for what.
+- `MarketDataClient::l2BookSubscriptionJson(coin, options)` — the exact string `subscribeL2Book`
+  sends, so a subscription made with `nSigFigs` or `fast` can be reproduced for `unsubscribeRaw`.
+
 ### Changed
+- `unsubscribeRaw` now drops a maintained book by matching the exact subscription string — the rule
+  `WsSession::unsubscribe` already used — instead of scanning the JSON for a coin name.
+- `subscribeL2Book` warns when a coin already has a different `l2Book` subscription: both arrive on
+  the same channel, so the shared book would flip between their depths.
+- Corrected the documented `l2Book` cadence, which claimed "once per block, roughly every 0.5 s".
+  The default feed is seconds apart, so levels below the top are correspondingly stale.
 - Replaced the placeholder licence with a full source-code licence agreement: perpetual, non-exclusive,
   commercial use and modification allowed, distribution only in compiled form; no resale, no source
   publication, no connector/SDK redistribution, no patenting of the embodied algorithms; provenance warranty
   and IP indemnity from the licensor, who keeps the right to license, resell or open-source the library.
-- Added `docs/LICENSING.md` — the licence in plain language, with an FAQ and a pre-signature checklist.
 - Simplified the licence wording and removed every placeholder: the parties come from the Order and the
   governing law defaults to the licensor's country. Added `LICENSE.ru`, a Russian version of equal force;
   the parties sign one of the two.
+- Added `docs/LICENSING.md` — the licence in plain language, with an FAQ and a pre-signature checklist.
 
 ## [1.3.0] — 2026-09-19
 

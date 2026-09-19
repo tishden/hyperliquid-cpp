@@ -117,7 +117,7 @@ typed for both.
 
 | Subscription | Delivered on channel | Status | Callback / helper |
 |---|---|---|---|
-| `l2Book` | `l2Book` | Typed | `subscribeL2Book(coin, options)` → `onL2Book` + a maintained `OrderBook`; `nSigFigs` / `mantissa` aggregation supported |
+| `l2Book` | `l2Book` | Typed | `subscribeL2Book(coin, options)` → `onL2Book` + a maintained `OrderBook`. Supports `nSigFigs` / `mantissa` aggregation and `fast` (5 levels per side at ~10× the rate — see [API.md §4.1](API.md#41-marketdataconfig-and-l2bookoptions) for the measured rates). Some data vendors expose the `fast` variant under a channel name of their own, such as `fastBook`; the venue itself has no such channel, only the parameter. |
 | `bbo` | `bbo` | Typed | `subscribeBbo(coin)` → `onBbo`, overlaid onto the book when `applyBboToBooks` |
 | `trades` | `trades` | Typed | `subscribeTrades(coin)` → `onTrades` (liquidations arrive here too) |
 | `activeAssetCtx` | `activeAssetCtx` / `activeSpotAssetCtx` | Typed | `subscribeAssetCtx(coin)` → `onAssetCtx` |
@@ -211,6 +211,7 @@ strongest available is listed.
 
 | Feature | Golden vector | Mock venue | Live testnet |
 |---|---|---|---|
+| `l2Book` `fast` subscription | n/a (no signing) | ✅ `FastL2BookSubscriptionShape`, `FastL2BookMaintainsTheBookAndUnsubscribesByTheSameString` | ✅ measured against the default feed on mainnet BTC and ETH, 2026-09-19 |
 | `order` — limit, all tifs, cloid | ✅ `SingleOrderMatchesSdk`, `BatchOfTwoOrders{Mainnet,Testnet}` | ✅ `OrderLifecycleRestingPartialFilled`, `BatchPlacementMapsStatusesInOrder` | ✅ post-only resting order, batch of two |
 | `order` — trigger (TP/SL) | ✅ `TriggerOrderMatchesSdk` | ✅ `ModifyKeepsTheTriggerSpecification` | ❌ not exercised |
 | `order` — `normalTpsl` / `positionTpsl` grouping | ✅ `TpSlGroupingMatchesSdk` | ❌ | ❌ |

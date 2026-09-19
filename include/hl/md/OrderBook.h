@@ -16,9 +16,12 @@ namespace hl {
  * @brief L2 order book for one coin, maintained from `l2Book` snapshots and `bbo` updates.
  *
  * Hyperliquid does not stream incremental depth diffs: every `l2Book` message
- * is a complete snapshot of up to 20 levels per side (published once per
- * block, roughly every 0.5 s), while `bbo` pushes every best-bid/offer change
- * in between. The book therefore:
+ * is a complete snapshot — 20 levels per side, or 5 on a `fast` subscription —
+ * while `bbo` pushes every best-bid/offer change in between. The two snapshot
+ * feeds run at very different rates; measured on mainnet BTC/ETH on 2026-09-19,
+ * the 20-level feed arrives about every 5.3 s and the `fast` one about every
+ * 0.54 s, against roughly 7 `bbo` messages per second. Levels below the top are
+ * therefore as stale as the last snapshot: seconds, not milliseconds. The book:
  *  - replaces both sides on each snapshot (`applySnapshot`), and
  *  - overlays newer `bbo` updates on the top of book (`applyBbo`): levels that
  *    the new best price has moved through are removed, the best level is

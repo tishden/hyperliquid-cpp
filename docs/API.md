@@ -489,6 +489,25 @@ while (!loop.stopped()) { loop.runOnce(0); }
 |---|---|---|
 | `nSigFigs` | `std::optional<int>` | 2..5 — server-side aggregation to N significant figures |
 | `mantissa` | `std::optional<int>` | 1, 2 or 5 — only meaningful with `nSigFigs == 5`; ignored unless `nSigFigs` is set |
+| `fast` | `bool` (default `false`) | Subscribe to the venue's 5-level publish path instead of the 20-level one. Same channel, same frame shape, same parsing — only depth and rate differ. Omitted from the JSON when `false`. |
+
+**What `fast` actually buys you.** Despite the name, it is a *rate* difference, not a latency one.
+Measured on mainnet BTC and ETH on 2026-09-19 from a single host:
+
+| Feed | Depth | Snapshot interval (p50) |
+|---|---|---|
+| `l2Book` default | 20 levels/side | ~5.3 s |
+| `l2Book` with `fast` | 5 levels/side | ~0.54 s |
+| `bbo` | best bid/offer only | ~7 messages/s (~145 ms) |
+
+Matching snapshots of the two feeds by their venue timestamp showed no consistent delivery lead in
+either direction (within ±100 ms, sign varying between runs and coins). So:
+
+- **Top of book only** — `bbo` already pushes every change; `fast` adds little.
+- **Levels 2..5 kept fresh** (depth-aware quoting, queue estimates) — `fast` refreshes them ~10×
+  more often than the default subscription. This is its real use.
+- **Levels 6..20 needed** (`cumulativeSize`, `vwapForSize` over deep size) — you must keep the
+  default subscription and accept that those levels are seconds old between snapshots.
 
 ### 4.2 MarketDataListener
 
@@ -553,9 +572,9 @@ public:
 |---|---|
 | `start()` | Connect; reconnects automatically until `stop()` |
 | `stop()` | Close and stop reconnecting (also called by the destructor) |
-| `subscribeL2Book(coin, options)` | Sends `{"type":"l2Book","coin":C[,"nSigFigs":N[,"mantissa":M]]}` and creates a maintained `OrderBook` for `coin` (once per coin) |
+| `subscribeL2Book(coin, options)` | Sends `{"type":"l2Book","coin":C[,"nSigFigs":N[,"mantissa":M]][,"fast":true]}` and creates a maintained `OrderBook` for `coin` (once per coin). Calling it again for the same coin with different options logs a warning: both subscriptions feed the one book. |
 | `subscribeBbo(coin)` | `{"type":"bbo","coin":C}` |
-| `subscribeBook(coin)` | `subscribeL2Book(coin)` + `subscribeBbo(coin)` — recommended for trading |
+| `subscribeBook(coin, options)` | `subscribeL2Book(coin, options)` + `subscribeBbo(coin)` — recommended for trading |
 | `subscribeTrades(coin)` | `{"type":"trades","coin":C}` |
 | `subscribeAssetCtx(coin)` | `{"type":"activeAssetCtx","coin":C}` (HL replies on channel `activeAssetCtx` for perps, `activeSpotAssetCtx` for spot) |
 | `subscribeAllMids()` | `{"type":"allMids"}` |
@@ -567,6 +586,7 @@ public:
 | `subscribeRaw(json)` | Any subscription object, e.g. `{"type":"userTwapSliceFills","user":"0x…"}`. Frames of channels without a typed callback arrive in `onUnhandled`. |
 | `unsubscribeRaw(json)` | Removes a subscription registered with exactly this JSON and sends `unsubscribe` if connected. Use `subscriptionJson()` to reproduce what a typed helper sent. If the JSON is an `l2Book` subscription, the maintained book for that coin is **destroyed** as well, so `book(coin)` returns `nullptr` instead of a frozen snapshot. |
 | `subscriptionJson(type, coin)` | `{"type":"<type>"[,"coin":"<coin>"]}` |
+| `l2BookSubscriptionJson(coin, options)` | The exact string `subscribeL2Book` sends for those options — pass it to `unsubscribeRaw` to undo a subscription made with `nSigFigs` or `fast` |
 | `book(coin)` | Maintained book, or `nullptr` if there was no `subscribeL2Book` for that coin |
 | `isConnected()` | WebSocket open |
 | `parserStats()` | `WsMessageParser::Stats` of the internal parser |
@@ -576,8 +596,10 @@ public:
 Subscriptions may be added before or after `start()`. They are stored in a registry (duplicates by exact JSON are
 ignored), sent immediately if connected, and replayed after every reconnect.
 
-Do not subscribe to both an aggregated (`nSigFigs`) and an unaggregated `l2Book` for the same coin on one
-client: `l2Book` frames do not identify their aggregation, and both would feed the same `OrderBook`.
+Do not take two different `l2Book` subscriptions for the same coin on one client — aggregated
+(`nSigFigs`) plus unaggregated, or `fast` plus default. The frames do not say which subscription they
+answer, so both feed the same `OrderBook` and its depth flips between them on every snapshot. The
+client logs a warning when you do this. Two clients on two connections is the way to consume both.
 
 Coin names are validated with `isValidCoinName` ([§2.3](#23-typesh--network-side-tif-address-cloid-error)) before
 a subscription object is built. `subscribeL2Book`, `subscribeCandle` and `subscribeActiveAssetData` log an error
@@ -589,8 +611,9 @@ formatted with `toHex`, so the user subscriptions are always well formed.
 
 `#include "hl/md/OrderBook.h"`
 
-L2 book for one coin. Hyperliquid publishes no incremental depth diffs: `l2Book` is a full snapshot of up to 20
-levels per side (about once per block), while `bbo` pushes every best-price change in between. Storage is two
+L2 book for one coin. Hyperliquid publishes no incremental depth diffs: `l2Book` is a full snapshot — 20 levels
+per side, or 5 on a `fast` subscription ([§4.1](#41-marketdataconfig-and-l2bookoptions)) — while `bbo` pushes every
+best-price change in between. Snapshots are seconds apart, so levels below the top are correspondingly stale. Storage is two
 inline arrays; the book never allocates after construction. Index 0 is the best level on both sides.
 
 | Member | Description |

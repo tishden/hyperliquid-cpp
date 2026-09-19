@@ -89,8 +89,10 @@ socket ─► TlsStream::doRead ─► WsFrameDecoder (zero-copy for unfragmente
        ─► MarketDataListener::onL2Book / onBbo / … and onBookUpdate(book, kind)
 ```
 
-**Why snapshot + overlay.** Hyperliquid publishes no incremental depth: `l2Book` is a full top-20
-snapshot per block, `bbo` fires on every best-price change between blocks. `OrderBook` keeps the last
+**Why snapshot + overlay.** Hyperliquid publishes no incremental depth: `l2Book` is a full snapshot
+(top 20, or top 5 on a `fast` subscription) and `bbo` fires on every best-price change in between.
+The snapshot feeds are slow relative to `bbo` — measured on mainnet on 2026-09-19: 20-level every
+~5.3 s, `fast` every ~0.54 s, `bbo` ~7 messages per second. `OrderBook` keeps the last
 snapshot and rewrites its top from `bbo`: levels that the new best price moved through are removed,
 the best level is inserted or resized, and stale opposite-side levels that would now cross are
 dropped. The result is a consistent, never-crossed book whose top is as fresh as the venue allows and
@@ -214,16 +216,16 @@ decimals; sizes have `szDecimals` decimals.
 | Robustness | every fixture truncated at every byte length and 2 000 random single-byte mutations must not crash the parser | `tests/ws_message_parser_test.cpp` |
 | Live | signing validated against the real testnet: the venue recovers exactly the signer address from our signatures over both WS `post` and HTTP | `hl_testnet_quoter`, see [TESTNET.md](TESTNET.md) |
 
-### Verification matrix (v1.3.0)
+### Verification matrix
 
 | Build | Tests | Result |
 |---|---|---|
-| Clang 21, Release | 186 | all passed |
-| GCC 11.5 (system), Release | 186 | all passed |
-| GCC 15, Release | 186 | all passed |
-| Clang 21, AddressSanitizer + UBSan | 186 | all passed, no reports |
-| Clang 21, ThreadSanitizer (library tests; examples not built) | 180 | all passed, no reports |
-| Docker build stage (Ubuntu 24.04, GCC 13) | 186 | all passed |
+| Clang 21, Release | 188 | all passed |
+| GCC 11.5 (system), Release | 188 | all passed |
+| GCC 15, Release | 188 | all passed |
+| Clang 21, AddressSanitizer + UBSan | 188 | all passed, no reports |
+| Clang 21, ThreadSanitizer (library tests; examples not built) | 182 | all passed, no reports |
+| Docker build stage (Ubuntu 24.04, GCC 13) | 188 | all passed |
 
 | Live check against Hyperliquid testnet | Result |
 |---|---|

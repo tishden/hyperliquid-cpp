@@ -1,5 +1,7 @@
 #include "hl/md/MarketDataClient.h"
 
+#include <algorithm>
+
 #include "hl/core/Log.h"
 
 namespace hl {
@@ -36,30 +38,51 @@ std::string MarketDataClient::subscriptionJson(std::string_view type, std::strin
     return json;
 }
 
+std::string MarketDataClient::l2BookSubscriptionJson(std::string_view coin, L2BookOptions options) {
+    std::string json = subscriptionJson("l2Book", coin);
+    if (!options.nSigFigs && !options.fast) {
+        return json;
+    }
+    json.pop_back();
+    if (options.nSigFigs) {
+        json += R"(,"nSigFigs":)" + std::to_string(*options.nSigFigs);
+        if (options.mantissa) {
+            json += R"(,"mantissa":)" + std::to_string(*options.mantissa);
+        }
+    }
+    if (options.fast) {
+        // Omitted when false: the venue defaults to the 20-level path, and leaving the key out
+        // keeps the string identical to what earlier versions sent.
+        json += R"(,"fast":true)";
+    }
+    json += '}';
+    return json;
+}
+
 void MarketDataClient::subscribeL2Book(std::string_view coin, L2BookOptions options) {
     if (!isValidCoinName(coin)) {
         logf(LogLevel::Error, "md: refusing to subscribe to invalid coin name");
         return;
     }
-    std::string json = subscriptionJson("l2Book", coin);
-    if (options.nSigFigs) {
-        json.pop_back();
-        json += R"(,"nSigFigs":)" + std::to_string(*options.nSigFigs);
-        if (options.mantissa) {
-            json += R"(,"mantissa":)" + std::to_string(*options.mantissa);
-        }
-        json += '}';
-    }
-    if (findBook(coin) == nullptr) {
-        books_.push_back(std::make_unique<OrderBook>(std::string{coin}));
+    std::string json = l2BookSubscriptionJson(coin, options);
+    const auto existing = std::find_if(books_.begin(), books_.end(),
+                                       [coin](const BookEntry& e) { return e.book->coin() == coin; });
+    if (existing == books_.end()) {
+        books_.push_back({std::make_unique<OrderBook>(std::string{coin}), json});
+    } else if (existing->subscription != json) {
+        // Both subscriptions arrive on the same `l2Book` channel and are indistinguishable in the
+        // frame, so the shared book would flip between their depths on every snapshot.
+        logf(LogLevel::Warn, "md: %.*s already has a different l2Book subscription; the maintained book "
+                             "will be fed by both and flip between them",
+             static_cast<int>(coin.size()), coin.data());
     }
     session_.subscribe(std::move(json));
 }
 
 void MarketDataClient::subscribeBbo(std::string_view coin) { session_.subscribe(subscriptionJson("bbo", coin)); }
 
-void MarketDataClient::subscribeBook(std::string_view coin) {
-    subscribeL2Book(coin);
+void MarketDataClient::subscribeBook(std::string_view coin, L2BookOptions options) {
+    subscribeL2Book(coin, options);
     subscribeBbo(coin);
 }
 
@@ -122,33 +145,24 @@ void MarketDataClient::subscribeRaw(std::string json) { session_.subscribe(std::
 
 void MarketDataClient::unsubscribeRaw(std::string_view json) {
     session_.unsubscribe(json);
-    // Drop a book that is no longer fed, so book(coin) cannot return a frozen snapshot.
-    if (json.find(R"("type":"l2Book")") != std::string_view::npos) {
-        const auto coinStart = json.find(R"("coin":")");
-        if (coinStart != std::string_view::npos) {
-            const auto from = coinStart + 8;
-            const auto to = json.find('"', from);
-            if (to != std::string_view::npos) {
-                const std::string_view coin = json.substr(from, to - from);
-                std::erase_if(books_, [coin](const std::unique_ptr<OrderBook>& b) { return b->coin() == coin; });
-            }
-        }
-    }
+    // Drop a book that is no longer fed, so book(coin) cannot return a frozen snapshot. Matched on
+    // the exact subscription string, the same rule WsSession::unsubscribe applies.
+    std::erase_if(books_, [json](const BookEntry& e) { return e.subscription == json; });
 }
 
 const OrderBook* MarketDataClient::book(std::string_view coin) const noexcept {
-    for (const auto& b : books_) {
-        if (b->coin() == coin) {
-            return b.get();
+    for (const auto& e : books_) {
+        if (e.book->coin() == coin) {
+            return e.book.get();
         }
     }
     return nullptr;
 }
 
 OrderBook* MarketDataClient::findBook(std::string_view coin) noexcept {
-    for (auto& b : books_) {
-        if (b->coin() == coin) {
-            return b.get();
+    for (auto& e : books_) {
+        if (e.book->coin() == coin) {
+            return e.book.get();
         }
     }
     return nullptr;
@@ -159,8 +173,8 @@ void MarketDataClient::onSessionOpen() { listener_.onConnected(); }
 void MarketDataClient::onSessionMessage(std::string_view message) { parser_.parse(message, *this); }
 
 void MarketDataClient::onSessionClosed(std::string_view reason) {
-    for (auto& b : books_) {
-        b->clear();
+    for (auto& e : books_) {
+        e.book->clear();
     }
     listener_.onDisconnected(reason);
 }
