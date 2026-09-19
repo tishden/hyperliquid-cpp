@@ -1,35 +1,312 @@
-hyperliquid-cpp — Proprietary Software License
-Copyright (c) 2026 The hyperliquid-cpp authors. All rights reserved.
+HYPERLIQUID-CPP SOURCE CODE LICENCE AGREEMENT
+Version 1.0 — 2026-09-19
 
-This software and its documentation (the "Software") are proprietary and
-confidential. The Software is licensed, not sold.
+Copyright (c) 2026 [LICENSOR LEGAL NAME]. All rights reserved.
 
-1. Grant. Subject to a separately executed license agreement or order form
-   (the "Agreement") and payment of the applicable fees, the licensee named in
-   the Agreement receives a non-exclusive, non-transferable right to use,
-   modify and compile the Software for its internal business purposes and to
-   distribute the Software only in compiled object form as part of the
-   licensee's own products, as further limited by the Agreement.
+This Agreement is between [LICENSOR LEGAL NAME] ("Licensor") and the person or
+legal entity identified in the Order (the "Licensee"). It governs the source
+code, build files, tests, benchmarks, examples and documentation delivered to
+the Licensee (together, the "Software"). By using the Software the Licensee
+accepts this Agreement.
 
-2. Restrictions. Except as expressly permitted by the Agreement, the licensee
-   shall not (a) distribute, sublicense, rent, lease or publish the Software in
-   source form; (b) remove proprietary notices; (c) use the Software to build a
-   competing connector product.
+The Software is licensed, not sold. The Licensor retains ownership of it.
 
-3. Third-party components. The Software depends on third-party components
-   licensed under their own terms, listed in THIRD_PARTY_NOTICES.md. Nothing in
-   this license restricts rights granted by those licenses.
 
-4. No warranty. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-   EXPRESS OR IMPLIED, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR
-   PURPOSE AND NON-INFRINGEMENT. TRADING DIGITAL ASSETS INVOLVES SUBSTANTIAL
-   RISK OF LOSS; THE LICENSOR IS NOT LIABLE FOR TRADING LOSSES, MISSED OR
-   ERRONEOUS ORDERS, OR ANY DAMAGES ARISING FROM USE OF THE SOFTWARE.
+1. DEFINITIONS
 
-5. Limitation of liability. IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY
-   INDIRECT, INCIDENTAL, SPECIAL OR CONSEQUENTIAL DAMAGES, OR FOR AMOUNTS
-   EXCEEDING THE FEES PAID UNDER THE AGREEMENT IN THE TWELVE MONTHS PRECEDING
-   THE CLAIM.
+1.1 "Order" means the order form, invoice or written agreement identifying the
+    Licensee, the Software, the fees and any negotiated variations. Terms in
+    the Order prevail over this Agreement where they conflict.
 
-If no Agreement is in place, no rights are granted beyond evaluation of the
-Software for thirty (30) days on non-production systems.
+1.2 "Source Form" means human-readable code and its documentation. "Object
+    Form" means the result of compiling or otherwise mechanically transforming
+    Source Form so that the Source Form is not recoverable from it by ordinary
+    means — for example a static or shared library, an executable, or a service
+    that exposes only its network interface.
+
+1.3 "Derivative" means any modification, adaptation, translation, extension or
+    other work of the Licensee that incorporates or is derived from the
+    Software, to the extent it incorporates or derives from the Software.
+
+1.4 "Licensee Product" means a product, system or service of the Licensee whose
+    principal function is something other than providing an exchange connector,
+    trading SDK, API client library or developer toolkit.
+
+1.5 "Affiliate" means an entity that controls, is controlled by, or is under
+    common control with the Licensee, where control means more than 50 % of the
+    voting rights or equivalent.
+
+
+2. LICENCE GRANT
+
+Subject to payment of the fees stated in the Order and to the Licensee's
+compliance with this Agreement, the Licensor grants the Licensee a perpetual,
+worldwide, non-exclusive, non-transferable, non-sublicensable (except under
+clause 3) licence to:
+
+2.1 use, copy, compile, run and test the Software, in Source Form and Object
+    Form, for the Licensee's own business purposes, including commercial
+    purposes and proprietary trading for the Licensee's own account;
+
+2.2 modify the Software and create Derivatives, without any obligation to
+    disclose those Derivatives to the Licensor or to anyone else;
+
+2.3 incorporate the Software and Derivatives into Licensee Products and
+    distribute, deploy, host or otherwise commercially exploit those Licensee
+    Products, provided the Software and Derivatives are included in Object
+    Form only;
+
+2.4 operate the Software and Derivatives as part of a hosted or managed service
+    for third parties, provided no third party obtains the Source Form;
+
+2.5 make a reasonable number of copies for backup, disaster recovery, testing
+    and archival purposes.
+
+There is no limit on the number of the Licensee's developers, machines,
+processes, accounts or trading venues, and no royalty on the Licensee's trading
+results or on revenue from Licensee Products.
+
+
+3. PERMITTED DISCLOSURE
+
+3.1 The Licensee may disclose the Source Form to its employees, to its
+    Affiliates, and to contractors and professional advisers acting for the
+    Licensee, in each case only to the extent they need it for a purpose
+    permitted by clause 2 and only where they are bound by confidentiality
+    obligations at least as protective as clause 7. The Licensee remains
+    responsible for their compliance with this Agreement.
+
+3.2 The Licensee may disclose the Source Form where required by law, a court or
+    a regulator, giving the Licensor prior notice where lawfully possible.
+
+3.3 On a change of control of the Licensee, this licence passes to the successor
+    entity, provided the Licensor is notified in writing within 30 days and the
+    successor is bound by this Agreement. Any other assignment requires the
+    Licensor's prior written consent, which shall not be unreasonably withheld.
+
+
+4. RESTRICTIONS
+
+Except as clauses 2 and 3 expressly permit, the Licensee shall not:
+
+4.1 sell, resell, rent, lease, lend, sublicense, assign or otherwise transfer
+    the Software or any Derivative to a third party, whether alone, as part of
+    a collection, or as a component of a product that is not a Licensee Product;
+
+4.2 distribute, publish or otherwise make the Software or any Derivative
+    available to a third party in Source Form — including in a public or shared
+    code repository, a package registry, a container image that ships the Source
+    Form, an article, a talk, a forum post, a paste service, a dataset used to
+    train a machine-learning model, or any other public or semi-public medium;
+
+4.3 distribute the Software or a Derivative as, or as part of, an exchange
+    connector, trading SDK, API client library, developer toolkit or similar
+    component offered to third parties, whether for a fee or free of charge;
+
+4.4 file, prosecute or acquire any patent, utility model or similar right
+    covering the Software, any Derivative, or any algorithm, protocol
+    implementation, data structure or technique embodied in the Software; nor
+    assert any patent, utility model or similar right against the Licensor or
+    against any other licensee or user of the Software in respect of the
+    Software or its use;
+
+4.5 remove, obscure or alter any copyright, licence or attribution notice in the
+    Software, or state or imply that the Licensee originated it;
+
+4.6 use the Licensor's name, trademarks or logos without prior written consent,
+    except to state factually that the Licensee licenses the Software.
+
+For the avoidance of doubt, clause 4.4 does not prevent the Licensee from
+patenting its own inventions that do not read on the Software, and nothing in
+clause 4 restricts what the Licensee may do with its own trading strategies,
+data, models or other code that merely calls the Software's interfaces.
+
+
+5. RESERVATION OF RIGHTS BY THE LICENSOR
+
+5.1 The Licensor retains all right, title and interest in the Software,
+    including all intellectual property rights. Only the rights expressly
+    granted in clause 2 pass to the Licensee.
+
+5.2 The licence granted is non-exclusive. The Licensor may, at any time and
+    without notice, licence, sell, distribute, publish or otherwise make the
+    Software available to any other party, on any terms, including releasing it
+    or any part of it publicly under an open-source licence.
+
+5.3 If the Licensor later publishes a version of the Software publicly, that
+    publication does not reduce, terminate or otherwise affect the rights the
+    Licensee holds under this Agreement in the version delivered to it. The
+    Licensee's obligations under clauses 4.1 to 4.3 and 7 cease to apply to
+    material that the Licensor itself has made public, from the date of that
+    publication, but continue to apply to any part of the Software and to any
+    Derivative that is not public.
+
+5.4 Feedback, bug reports and suggestions the Licensee chooses to send to the
+    Licensor may be used by the Licensor without restriction or compensation.
+    This gives the Licensor no right to the Licensee's Derivatives, strategies
+    or data.
+
+
+6. WARRANTIES AND INDEMNITY
+
+6.1 Ownership and clean provenance. The Licensor warrants that:
+
+    (a) it is the owner of the Software or otherwise has the right to grant this
+        licence;
+    (b) the Software, excluding the third-party components identified in clause
+        6.3, was created by or for the Licensor and does not incorporate code of
+        a third party;
+    (c) to the best of the Licensor's knowledge, the Software does not infringe
+        the copyright, trade-secret or other intellectual property rights of any
+        third party;
+    (d) the Software contains no undisclosed copyleft-licensed code that would
+        require the Licensee to disclose the Source Form of the Software, of a
+        Derivative or of a Licensee Product;
+    (e) the Software contains no intentional back door, time bomb, licence check
+        or other routine designed to disable it or to transmit the Licensee's
+        keys, credentials, orders or trading data to the Licensor or to any
+        third party.
+
+6.2 IP indemnity. The Licensor shall defend the Licensee against a third-party
+    claim that the Software as delivered infringes that third party's
+    intellectual property rights, and shall pay damages and costs finally
+    awarded or agreed in settlement, provided the Licensee notifies the Licensor
+    promptly, gives the Licensor control of the defence and settlement, and
+    provides reasonable assistance. The Licensor may at its option procure the
+    right to continue using the Software, replace or modify it to make it
+    non-infringing, or terminate this Agreement and refund a fair portion of the
+    fees paid. This indemnity does not cover a claim arising from a Derivative,
+    from combining the Software with anything not supplied by the Licensor, from
+    use contrary to this Agreement, or from the third-party components of clause
+    6.3. The Licensor's total liability under this clause is subject to clause
+    8.2.
+
+6.3 Third-party components. The Software builds against and links third-party
+    components that are not owned by the Licensor and are licensed under their
+    own permissive terms. They are listed, with their versions and licences, in
+    THIRD_PARTY_NOTICES.md. The warranties in clause 6.1 do not extend to those
+    components; the Licensor warrants only that it has identified them
+    accurately and that, to its knowledge, their licences permit the use
+    contemplated by this Agreement. The Licensee is responsible for complying
+    with those licences, including their attribution requirements, when it
+    distributes a Licensee Product.
+
+6.4 No warranty of results. Except as stated in clauses 6.1 to 6.3, the Software
+    is provided "AS IS". The Licensor disclaims all other warranties, express or
+    implied, including merchantability, fitness for a particular purpose,
+    accuracy, uninterrupted or error-free operation, and non-infringement.
+    Trading digital assets carries substantial risk of loss. The Licensor does
+    not warrant any trading outcome, any latency figure, continued compatibility
+    with the Hyperliquid API, or the availability, correctness or behaviour of
+    the Hyperliquid venue. Benchmark figures in the documentation describe the
+    hardware stated there and are not a performance commitment.
+
+6.5 No financial advice. The Software is a technical tool. Nothing in it or in
+    its documentation is investment, legal, tax or regulatory advice. The
+    Licensee is solely responsible for the lawfulness of its trading, for its
+    risk controls, and for any authorisation it needs.
+
+
+7. CONFIDENTIALITY
+
+7.1 The Source Form is the Licensor's confidential information. The Licensee
+    shall protect it with at least the care it applies to its own confidential
+    information of similar importance, and shall not disclose it except as
+    clause 3 permits.
+
+7.2 The obligation does not apply to information that is or becomes public
+    through no breach by the Licensee (including through publication by the
+    Licensor under clause 5.2), was lawfully known to the Licensee before
+    delivery, or is independently developed by the Licensee without use of the
+    Software.
+
+7.3 This obligation survives termination for as long as the information remains
+    confidential.
+
+
+8. LIABILITY
+
+8.1 Nothing in this Agreement limits liability that cannot be limited under
+    applicable law, including liability for fraud, wilful misconduct, or death
+    or personal injury caused by negligence.
+
+8.2 Subject to clause 8.1, each party's total aggregate liability arising out of
+    or in connection with this Agreement, whether in contract, tort or
+    otherwise, is limited to the fees paid by the Licensee under the Order in
+    the twelve months preceding the event giving rise to the liability.
+
+8.3 Subject to clause 8.1, neither party is liable for indirect, incidental,
+    special, punitive or consequential loss, nor for loss of profit, trading
+    loss, loss of opportunity, loss of goodwill or loss of data, even if advised
+    of the possibility.
+
+8.4 The Licensee is solely responsible for the operation of the Software in its
+    environment, including key custody, order and risk limits, monitoring, and
+    the consequences of orders sent by it.
+
+
+9. SUPPORT, UPDATES AND DELIVERY
+
+9.1 The Licensor delivers the Software once, in the form and by the means stated
+    in the Order. Support, maintenance, updates and new versions are not
+    included unless the Order says so; where they are, later versions are
+    licensed on the terms of this Agreement.
+
+9.2 The Licensee is responsible for keeping its own copy, including any
+    Derivatives, and for its own build and deployment pipeline.
+
+
+10. TERM AND TERMINATION
+
+10.1 This Agreement takes effect on delivery and continues perpetually unless
+     terminated under this clause.
+
+10.2 The Licensor may terminate the licence if the Licensee materially breaches
+     clause 4 or clause 7 and does not remedy the breach within 30 days of
+     written notice, or immediately where the breach cannot be remedied.
+
+10.3 On termination the Licensee shall stop using the Software, delete or
+     destroy all copies of the Source Form (except copies it must retain by law
+     or in routine backups that are not readily accessible), and confirm this in
+     writing on request. Licensee Products already distributed in Object Form
+     before termination may continue to be used and supported by their end
+     users.
+
+10.4 Clauses 1, 4.4, 5, 6.3, 6.4, 7, 8, 10.3, 10.4 and 11 survive termination.
+
+
+11. GENERAL
+
+11.1 Governing law and forum: [GOVERNING LAW], with the courts of
+     [JURISDICTION] having exclusive jurisdiction, or arbitration under
+     [ARBITRATION RULES] where the Order so states.
+
+11.2 Export control and sanctions: each party shall comply with applicable
+     export-control and sanctions laws. The Licensee shall not make the Software
+     available to a person or in a territory where doing so is prohibited.
+
+11.3 Entire agreement: this Agreement together with the Order is the entire
+     agreement between the parties on this subject and supersedes prior
+     discussions. Variations must be in writing and signed by both parties.
+
+11.4 Severability: if a provision is held unenforceable, the rest remains in
+     force and the provision is to be read as narrowly as needed to make it
+     enforceable.
+
+11.5 No waiver: a failure to enforce a provision is not a waiver of it.
+
+11.6 Language: this English text is the authoritative version of this Agreement;
+     any translation is provided for convenience only.
+
+
+Without a signed Order, no rights are granted beyond evaluating the Software for
+thirty (30) days on non-production systems.
+
+A plain-language explanation of these terms is in docs/LICENSING.md. That
+explanation is not part of this Agreement.
+
+Licensor: ______________________________   Licensee: ______________________________
+
+Name/title: ____________________________   Name/title: ____________________________
+
+Date: __________________________________   Date: __________________________________

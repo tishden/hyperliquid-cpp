@@ -14,6 +14,10 @@ configure time (or taken from the system) and are **not** modified.
 Keccak-256, MessagePack, EIP-712, WebSocket (RFC 6455) and HTTP/1.1 are
 implemented in this code base; no additional code is vendored.
 
+The licensor's clean-provenance warranty in [LICENSE](LICENSE) clause 6.1 covers the licensor's own code and
+does not extend to the components above; clause 6.3 covers what is warranted about them, and a licensee that
+redistributes a compiled product carries their attribution requirements.
+
 The golden test vectors in `tests/signer_test.cpp` and `tests/actions_test.cpp`
 were produced with the official `hyperliquid-python-sdk` (MIT). Test fixtures in
 `tests/fixtures/` are captures of public Hyperliquid market data.

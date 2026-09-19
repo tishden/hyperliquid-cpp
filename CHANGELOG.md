@@ -3,6 +3,15 @@
 All notable changes to this project are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+- Replaced the placeholder licence with a full source-code licence agreement: perpetual, non-exclusive,
+  commercial use and modification allowed, distribution only in compiled form; no resale, no source
+  publication, no connector/SDK redistribution, no patenting of the embodied algorithms; provenance warranty
+  and IP indemnity from the licensor, who keeps the right to license, resell or open-source the library.
+- Added `docs/LICENSING.md` — the licence in plain language, with an FAQ and a pre-signature checklist.
+
 ## [1.3.0] — 2026-09-19
 
 Result of a full code review and an audit of the connector against the Hyperliquid API documentation,

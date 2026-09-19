@@ -167,6 +167,7 @@ Setting up a testnet account and API wallet: [docs/TESTNET.md](docs/TESTNET.md).
 | [docs/SIGNING.md](docs/SIGNING.md) | Exact Hyperliquid L1-action signing specification with worked vectors; precomputed-nonce ECDSA |
 | [docs/TESTNET.md](docs/TESTNET.md) | Testnet account, API wallet, running and reading the demo |
 | [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Benchmark results and how to reproduce them |
+| [docs/LICENSING.md](docs/LICENSING.md) | The licence in plain language: what you may and may not do, warranties, FAQ, pre-signature checklist |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
 
 Doxygen HTML: `scripts/docs.sh`.
@@ -197,6 +198,13 @@ docs/                reference and guides
 scripts/             build.sh, test.sh, bench.sh, docs.sh
 ```
 
-## License
+## Licence
 
-Proprietary — see [LICENSE](LICENSE). Third-party components: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+A perpetual, worldwide, **non-exclusive source-code licence**: use it commercially, modify it, and ship it
+inside your own products in compiled form, with no seat count and no royalty. You may not resell it, publish
+the source, distribute it as a connector or SDK, or patent what it embodies. The licensor warrants the code's
+provenance — its own code, no hidden copyleft, no back doors — and indemnifies against third-party IP claims,
+while keeping the right to license, resell or open-source the library to others.
+
+Full terms: [LICENSE](LICENSE) · plain-language explanation and FAQ: [docs/LICENSING.md](docs/LICENSING.md) ·
+third-party components: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
