@@ -489,3 +489,7 @@ removed by the venue automatically.
 | orders rejected with `invalid price` | price not rounded with `AssetInfo::roundPx` |
 | no fills / updates although orders rest | `accountAddress` set to the agent instead of the master account |
 | quoter exits immediately in Docker on Ctrl-C without cancel output | run with `--init` |
+
+---
+
+© 2026 Denis Tishkov <denis8825@ya.ru>. hyperliquid-cpp is licensed, not sold — see [LICENSE](../LICENSE).

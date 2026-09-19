@@ -237,3 +237,7 @@ Note the demo backs off exponentially on consecutive rejections.
 2. Start with `--dry-run` using `--mainnet --i-understand-this-trades-real-money`, then live with a small
    `--max-position-usd`, `--dead-man-switch`, and supervision.
 3. The example is a demonstration of the API, not a profitable strategy.
+
+---
+
+© 2026 Denis Tishkov <denis8825@ya.ru>. hyperliquid-cpp is licensed, not sold — see [LICENSE](../LICENSE).

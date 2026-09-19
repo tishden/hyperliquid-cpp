@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-hyperliquid-cpp
+// Copyright (c) 2026 Denis Tishkov <denis8825@ya.ru>. All rights reserved. See LICENSE.
 // Golden vectors: hyperliquid-python-sdk (tests/signing_test.py and vectors generated
 // with hyperliquid.utils.signing.sign_l1_action), private key kKey.
 #include <gtest/gtest.h>

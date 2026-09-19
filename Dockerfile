@@ -1,4 +1,6 @@
 # syntax=docker/dockerfile:1
+# SPDX-License-Identifier: LicenseRef-hyperliquid-cpp
+# Copyright (c) 2026 Denis Tishkov <denis8825@ya.ru>. All rights reserved. See LICENSE.
 #
 # Multi-stage image for hyperliquid-cpp.
 #

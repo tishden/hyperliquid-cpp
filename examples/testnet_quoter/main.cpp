@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-hyperliquid-cpp
+// Copyright (c) 2026 Denis Tishkov <denis8825@ya.ru>. All rights reserved. See LICENSE.
 // hl_testnet_quoter — end-to-end demo of hyperliquid-cpp on Hyperliquid TESTNET.
 //
 // Builds an L2 order book from the public WebSocket (l2Book + bbo) and runs a

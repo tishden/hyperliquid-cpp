@@ -268,3 +268,7 @@ Live checks used unfunded random keys, so the venue rejected the orders with
 fills. Fill handling is covered end-to-end by the mock-venue tests.
 
 All tests also run under AddressSanitizer + UndefinedBehaviorSanitizer (`scripts/test.sh asan`).
+
+---
+
+© 2026 Denis Tishkov <denis8825@ya.ru>. hyperliquid-cpp is licensed, not sold — see [LICENSE](../LICENSE).

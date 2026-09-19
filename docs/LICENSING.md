@@ -163,3 +163,7 @@ governing law defaults to the licensor's country unless the Order says otherwise
 - [ ] Your own patent strategy is compatible with clause 4.4
 - [ ] You are comfortable with a non-exclusive licence, or you negotiate exclusivity in the Order
 - [ ] Your compliance team has seen the third-party licence list
+
+---
+
+© 2026 Denis Tishkov <denis8825@ya.ru>. hyperliquid-cpp is licensed, not sold — see [LICENSE](../LICENSE).

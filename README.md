@@ -143,23 +143,82 @@ build/release/examples/hl_live_check --key-file secrets/testnet.env --coin ETH -
 
 Full output of a real run: [docs/TESTNET.md](docs/TESTNET.md#4-acceptance-check).
 
-## The testnet demo
+## The testnet demo, end to end
 
 `hl_testnet_quoter` is a complete, readable market maker built only on the public API: it maintains
 the book from `l2Book` + `bbo`, quotes both sides post-only around the microprice with inventory skew
 and a hard position limit, amends quotes in place, backs off on rejections, optionally keeps a
 dead-man's switch, and cancels everything on Ctrl-C with a PnL summary.
 
+**1. Build.**
+
 ```bash
-export HL_PRIVATE_KEY=0x…        HL_ACCOUNT_ADDRESS=0x…
-build/release/examples/hl_testnet_quoter --coin ETH --notional 20 --half-spread-bps 8 --duration 600
+git clone https://github.com/tishden/hyperliquid-cpp && cd hyperliquid-cpp
+cmake --preset release && cmake --build --preset release
 ```
 
-Credentials go in a `secrets/*.env` file (gitignored); copy the annotated
-[credentials.env.example](credentials.env.example), which also explains how to tell an agent wallet
-from the master account it trades for — the most common way to get this wrong. Setting up a testnet
-account and API wallet: [docs/TESTNET.md](docs/TESTNET.md); running against mainnet and what a real
-run looks like: [docs/RUNNING.md §4](docs/RUNNING.md#4-acceptance-run-against-a-live-venue).
+**2. Watch it work without a key.** `--dry-run` runs the full market-data path and the quoting
+maths, and prints the quotes it *would* send. Nothing is signed and nothing is sent.
+
+```bash
+build/release/examples/hl_testnet_quoter --dry-run --coin ETH
+```
+
+**3. Add credentials.** Create an API (agent) wallet in the Hyperliquid testnet UI, fund the account
+from the faucet, then:
+
+```bash
+cp credentials.env.example secrets/testnet.env   # secrets/ is gitignored
+chmod 600 secrets/testnet.env
+$EDITOR secrets/testnet.env                      # agent key + the MASTER account address
+```
+
+**4. Quote for ten minutes on testnet.**
+
+```bash
+build/release/examples/hl_testnet_quoter --key-file secrets/testnet.env \
+    --coin ETH --notional 20 --half-spread-bps 8 --duration 600
+```
+
+Real output from that command (trimmed):
+
+```text
+hyperliquid-cpp 1.3.0 — ETH quoter on testnet (live orders)
+[ex] ready: account 0x…, signer 0x…, ETH asset=1 szDecimals=4, position 0
+[status] ETH mid=2645.4 spread=1.51bps bid=2643.9(Open) ask=2648.3(Open) pos=0 fills=0 vol=$0 pnl≈$0 order_rt=801/801ms(mean/last) sign=0.01ms
+[status] ETH mid=2644.8 spread=1.51bps bid=2643.1(Open) ask=2647.5(Open) pos=0 fills=0 vol=$0 pnl≈$0 order_rt=801/801ms(mean/last) sign=0.01ms
+[status] ETH mid=2646.25 spread=1.13bps bid=2643.8(Open) ask=2648.1(Open) pos=0 fills=0 vol=$0 pnl≈$0 order_rt=801/801ms(mean/last) sign=0.01ms
+^C
+stopping…
+[shutdown] canceling 2 live order(s)…
+
+══ summary ══════════════════════════════════════════════
+  coin            ETH
+  orders placed   2   amendments 10   rejects 0
+  fills           0 (maker 0)   volume $0
+  position        0 → 0
+  pnl (mark@mid)  $0
+  actions         13 sent, 0 via HTTP, 0 errors, 0 timeouts, 0 reconciles
+  signatures      13 precomputed-nonce, 0 deterministic
+  build+sign      n=13   mean   0.008 ms   min   0.003   max   0.016
+  order rt        n=2    mean 801.017 ms   min 800.995   max 801.040
+  cancel rt       n=1    mean 809.695 ms   min 809.695   max 809.695
+  modify rt       n=10   mean 840.116 ms   min 752.675   max 1255.894
+  md messages     63 (parse errors 0, reconnects 0)
+═════════════════════════════════════════════════════════
+```
+
+Two things in that output are the point of this library. **`build+sign 0.008 ms`** is everything it
+does per action — encode, keccak, EIP-712, ECDSA, frame. **`order rt 801 ms`** is the venue: block
+production plus the network. And **`amendments 10` against `orders placed 2`** is the quoting model
+working — quotes are moved with `modify` in place, keeping the order id and its queue position
+instead of cancelling and re-placing.
+
+Credentials go in a `secrets/*.env` file (gitignored); the annotated
+[credentials.env.example](credentials.env.example) explains how to tell an agent wallet from the
+master account it trades for — the most common way to get this wrong. Setting up a testnet account
+and API wallet: [docs/TESTNET.md](docs/TESTNET.md); running against mainnet and what a real run
+looks like: [docs/RUNNING.md §4](docs/RUNNING.md#4-acceptance-run-against-a-live-venue).
 
 ## Documentation
 
@@ -175,6 +234,7 @@ run looks like: [docs/RUNNING.md §4](docs/RUNNING.md#4-acceptance-run-against-a
 | [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Benchmark results and how to reproduce them |
 | [docs/LICENSING.md](docs/LICENSING.md) | The licence in plain language: what you may and may not do, warranties, FAQ, pre-signature checklist |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
+| [docs/hyperliquid-cpp-offer-ru.pdf](docs/hyperliquid-cpp-offer-ru.pdf) | Коммерческое предложение (RU) — what is being sold, in three pages. Source: [docs/offer-ru.html](docs/offer-ru.html), rebuild with `scripts/offer-pdf.sh` |
 
 Doxygen HTML: `scripts/docs.sh`.
 
@@ -216,3 +276,7 @@ while keeping the right to license, resell or open-source the library to others.
 Full terms: [LICENSE](LICENSE) (English) · [LICENSE.ru](LICENSE.ru) (Russian, equal force — the parties sign
 one of them) · plain-language explanation and FAQ: [docs/LICENSING.md](docs/LICENSING.md) · third-party
 components: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+---
+
+© 2026 Denis Tishkov <denis8825@ya.ru>. hyperliquid-cpp is licensed, not sold — see [LICENSE](LICENSE).

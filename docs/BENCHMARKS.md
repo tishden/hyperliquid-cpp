@@ -206,3 +206,7 @@ docker run --rm --cpuset-cpus=2 hyperliquid-cpp hl_benchmarks
 Numbers vary by a few percent between runs; for comparisons pin to an isolated core, use the `performance`
 governor and compare medians of several runs. The benchmarks that consume precomputed nonces refill the pool
 outside the timed region (`deterministic_fallbacks=0` confirms every timed signature used the fast path).
+
+---
+
+© 2026 Denis Tishkov <denis8825@ya.ru>. hyperliquid-cpp is licensed, not sold — see [LICENSE](../LICENSE).

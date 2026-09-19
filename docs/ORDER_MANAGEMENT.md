@@ -417,3 +417,7 @@ TLS encryption, kernel, network, and the venue's block time (~0.2 s) — is outs
 | 2 | socket closed | action fails `Transport`; reconcile → `unknownOid` or real status |
 | 3a | venue never received it | `Rejected`, "order not found on venue" |
 | 3b | venue accepted it | `Open` with oid (or `Filled`) — and `orderUpdates` confirm after resubscription |
+
+---
+
+© 2026 Denis Tishkov <denis8825@ya.ru>. hyperliquid-cpp is licensed, not sold — see [LICENSE](../LICENSE).

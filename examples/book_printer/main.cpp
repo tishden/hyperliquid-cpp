@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-hyperliquid-cpp
+// Copyright (c) 2026 Denis Tishkov <denis8825@ya.ru>. All rights reserved. See LICENSE.
 // hl_book_printer — minimal market-data example: maintain order books for a few
 // coins and print the top of book, spread, microprice and last trade.
 //

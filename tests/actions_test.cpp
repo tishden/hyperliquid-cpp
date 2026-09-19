@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-hyperliquid-cpp
+// Copyright (c) 2026 Denis Tishkov <denis8825@ya.ru>. All rights reserved. See LICENSE.
 // Golden vectors generated with the official hyperliquid-python-sdk
 // (msgpack.packb(action), action_hash, sign_l1_action), key kKey, nonce kNonce.
 #include <gtest/gtest.h>

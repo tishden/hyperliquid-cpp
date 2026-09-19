@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The project follows
 ## [Unreleased]
 
 ### Added
+- Copyright and `SPDX-License-Identifier: LicenseRef-hyperliquid-cpp` headers in every source file,
+  script, CMake file and the Dockerfile; the licence files and the documentation now name the
+  copyright holder.
+- `docs/hyperliquid-cpp-offer-ru.pdf` — a three-page commercial one-pager in Russian describing what
+  is being sold, positioned as a fast Hyperliquid client rather than a trading platform. Source in
+  `docs/offer-ru.html`, rebuilt with `scripts/offer-pdf.sh`.
+- README: the testnet demo written out end to end — build, key-free dry run, credentials, a live
+  testnet run and its real output, including the latency counters.
 - `ExchangeClient::spotTokenBalance(token)` — the spot balance of one token, populated when
   `loadSpotAssets` is set. On a unified account (the venue default) the USDC balance here is the
   collateral behind both spot and perp trading, and is the figure to size against.
@@ -179,3 +187,7 @@ the official Python SDK and the live venue.
 - 120 tests (unit, golden vectors, end-to-end against an in-process mock venue),
   25 benchmarks, ASan/UBSan clean, GCC 15 and Clang 21.
 - Examples: `hl_book_printer`, `hl_testnet_quoter`.
+
+---
+
+© 2026 Denis Tishkov <denis8825@ya.ru>. hyperliquid-cpp is licensed, not sold — see [LICENSE](LICENSE).

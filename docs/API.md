@@ -2542,3 +2542,7 @@ for current values.
 | Agent wallets | Can trade, cannot withdraw; revocable | `ExchangeConfig::privateKey` + `accountAddress` |
 | Vaults / sub-accounts | Actions carry `vaultAddress`; streams and queries use the vault address | `ExchangeConfig::vaultAddress` |
 | Latency | Orders are sequenced by HyperBFT consensus; acknowledgements typically arrive in hundreds of milliseconds | Local overhead per signed order ≈ 45 µs (dominated by ECDSA) |
+
+---
+
+© 2026 Denis Tishkov <denis8825@ya.ru>. hyperliquid-cpp is licensed, not sold — see [LICENSE](../LICENSE).

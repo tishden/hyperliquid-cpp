@@ -21,3 +21,7 @@ redistributes a compiled product carries their attribution requirements.
 The golden test vectors in `tests/signer_test.cpp` and `tests/actions_test.cpp`
 were produced with the official `hyperliquid-python-sdk` (MIT). Test fixtures in
 `tests/fixtures/` are captures of public Hyperliquid market data.
+
+---
+
+© 2026 Denis Tishkov <denis8825@ya.ru>. hyperliquid-cpp is licensed, not sold — see [LICENSE](LICENSE).

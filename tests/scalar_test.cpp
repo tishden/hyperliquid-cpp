@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-hyperliquid-cpp
+// Copyright (c) 2026 Denis Tishkov <denis8825@ya.ru>. All rights reserved. See LICENSE.
 // Cross-checks the private mod-n scalar arithmetic against OpenSSL BIGNUM on random inputs.
 #include <gtest/gtest.h>
 

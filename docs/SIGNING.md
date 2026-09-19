@@ -195,3 +195,6 @@ comparisons (tests, SDK cross-checks) must run with the pool disabled. Verificat
 confirmed live on testnet over both WebSocket and HTTP (`signingStats().precomputed` > 0, venue recovered the
 signer address).
 
+---
+
+© 2026 Denis Tishkov <denis8825@ya.ru>. hyperliquid-cpp is licensed, not sold — see [LICENSE](../LICENSE).

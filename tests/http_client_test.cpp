@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-hyperliquid-cpp
+// Copyright (c) 2026 Denis Tishkov <denis8825@ya.ru>. All rights reserved. See LICENSE.
 // HttpClient behaviour against the mock server: ordering, keep-alive, timeouts, rate limiting.
 #include <gtest/gtest.h>
 

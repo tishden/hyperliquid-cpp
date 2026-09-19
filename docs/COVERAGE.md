@@ -266,3 +266,7 @@ is expected — there is no wire encoding to freeze. The rows to be uneasy about
 in the golden-vector column and nothing else: `TpSlGroupingMatchesSdk`, `UpdateIsolatedMarginMatchesSdk`,
 `NoopAndReserveRequestWeightMatchSdk` and `BuilderFeeMatchesSdk` prove the encoding matches the reference SDK,
 but nothing in this repository has watched the venue accept them.
+
+---
+
+© 2026 Denis Tishkov <denis8825@ya.ru>. hyperliquid-cpp is licensed, not sold — see [LICENSE](../LICENSE).

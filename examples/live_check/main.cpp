@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-hyperliquid-cpp
+// Copyright (c) 2026 Denis Tishkov <denis8825@ya.ru>. All rights reserved. See LICENSE.
 // hl_live_check — scripted acceptance run of the order-management contract against a live venue.
 //
 // Exercises, step by step, what a trading application depends on: readiness, resting orders,

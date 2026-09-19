@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LicenseRef-hyperliquid-cpp
+# Copyright (c) 2026 Denis Tishkov <denis8825@ya.ru>. All rights reserved. See LICENSE.
 add_executable(hl_benchmarks
     bench_parser.cpp
     bench_order_book.cpp
