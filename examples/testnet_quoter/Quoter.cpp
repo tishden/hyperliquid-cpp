@@ -228,9 +228,22 @@ void Quoter::printStatus() {
     }
     const Decimal position = exchange_ != nullptr ? exchange_->position(settings_.coin) : Decimal{};
     const Decimal pnl = cash_ + (position - startPosition_).mul(mid);
-    std::printf("[status] %s mid=%s spread=%.2fbps%s pos=%s fills=%" PRIu64 " vol=$%s pnl≈$%s%s\n",
+    // Order-path latency so far: the venue round trip an order costs, and the local share of it.
+    std::string latency;
+    if (exchange_ != nullptr) {
+        const auto& st = exchange_->stats();
+        if (st.orderRoundTrip.count != 0) {
+            char buf[96];
+            std::snprintf(buf, sizeof(buf), " order_rt=%.0f/%.0fms(mean/last) sign=%.2fms",
+                          static_cast<double>(st.orderRoundTrip.meanUs()) / 1000.0,
+                          static_cast<double>(st.orderRoundTrip.lastUs) / 1000.0,
+                          static_cast<double>(st.buildAndSign.meanUs()) / 1000.0);
+            latency = buf;
+        }
+    }
+    std::printf("[status] %s mid=%s spread=%.2fbps%s pos=%s fills=%" PRIu64 " vol=$%s pnl≈$%s%s%s\n",
                 settings_.coin.c_str(), str(mid).c_str(), book->spreadBps(), quotes.c_str(), str(position).c_str(),
-                fills_, str(volumeUsd_).c_str(), str(pnl).c_str(),
+                fills_, str(volumeUsd_).c_str(), str(pnl).c_str(), latency.c_str(),
                 haltedByRisk_ ? "  [HALTED: position beyond 150% of the limit, quoting stopped]" : "");
 }
 
@@ -277,6 +290,18 @@ void Quoter::printSummary() const {
         const auto sig = exchange_->signingStats();
         std::printf("  signatures      %" PRIu64 " precomputed-nonce, %" PRIu64 " deterministic\n", sig.precomputed,
                     sig.deterministic);
+        const auto row = [](const char* label, const hl::ExchangeClient::LatencyStats& l) {
+            if (l.count == 0) {
+                return;
+            }
+            std::printf("  %-15s n=%-4" PRIu64 " mean %7.3f ms   min %7.3f   max %7.3f\n", label, l.count,
+                        static_cast<double>(l.meanUs()) / 1000.0, static_cast<double>(l.minUs) / 1000.0,
+                        static_cast<double>(l.maxUs) / 1000.0);
+        };
+        row("build+sign", st.buildAndSign);
+        row("order rt", st.orderRoundTrip);
+        row("cancel rt", st.cancelRoundTrip);
+        row("modify rt", st.modifyRoundTrip);
     }
     if (md_ != nullptr) {
         std::printf("  md messages     %" PRIu64 " (parse errors %" PRIu64 ", reconnects %" PRIu64 ")\n",

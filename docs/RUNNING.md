@@ -5,15 +5,16 @@ How to build, run and operate the library and its applications — natively, in 
 - [1. Requirements](#1-requirements)
 - [2. Building](#2-building)
 - [3. Running the examples](#3-running-the-examples)
-- [4. Docker](#4-docker)
-- [5. Credentials](#5-credentials)
-- [6. Configuration reference for your own application](#6-configuration-reference-for-your-own-application)
-- [7. Low-latency deployment](#7-low-latency-deployment)
-- [8. Running as a service (systemd)](#8-running-as-a-service-systemd)
-- [9. Logging and monitoring](#9-logging-and-monitoring)
-- [10. Shutdown and restarts](#10-shutdown-and-restarts)
-- [11. Production checklist](#11-production-checklist)
-- [12. Troubleshooting](#12-troubleshooting)
+- [4. Acceptance run against a live venue](#4-acceptance-run-against-a-live-venue)
+- [5. Docker](#5-docker)
+- [6. Credentials](#6-credentials)
+- [7. Configuration reference for your own application](#7-configuration-reference-for-your-own-application)
+- [8. Low-latency deployment](#8-low-latency-deployment)
+- [9. Running as a service (systemd)](#9-running-as-a-service-systemd)
+- [10. Logging and monitoring](#10-logging-and-monitoring)
+- [11. Shutdown and restarts](#11-shutdown-and-restarts)
+- [12. Production checklist](#12-production-checklist)
+- [13. Troubleshooting](#13-troubleshooting)
 
 ## 1. Requirements
 
@@ -60,7 +61,7 @@ faster Keccak than GCC on the reference machine.
 |---|---|---|
 | `build/release/examples/hl_book_printer` | top of book, spread, microprice, funding, last trade for coins; mainnet by default, `--testnet` | no |
 | `build/release/examples/hl_testnet_quoter` | two-sided post-only market maker on testnet | no with `--dry-run`, yes otherwise |
-| `build/release/examples/hl_live_check` | scripted acceptance run of the whole order-management contract against the live venue; exit code 0 only if every step passed | yes |
+| `build/release/examples/hl_live_check` | scripted acceptance run of the whole order-management contract against the live venue; exit code 0 only if every step passed. Testnet by default, mainnet behind two flags — see [§4](#4-acceptance-run-against-a-live-venue) | yes |
 | `build/release/tests/hl_tests` | full test suite (runs offline against an in-process mock venue) | no |
 | `build/release/benchmarks/hl_benchmarks` | Google Benchmark suite | no |
 
@@ -83,7 +84,146 @@ build/release/examples/hl_live_check --key-file secrets/testnet.env --coin ETH -
 All quoter options are listed by `--help` and in [TESTNET.md](TESTNET.md#5-run-the-demo); account setup is
 described there as well. The quoter enables the precomputed-nonce signer by default (`--presign 256`).
 
-## 4. Docker
+
+## 4. Acceptance run against a live venue
+
+`hl_live_check` walks the whole order-management contract step by step and exits non-zero if any step
+fails. It defaults to testnet; mainnet needs two flags, one of which spells out what it means:
+
+```bash
+# testnet
+build/release/examples/hl_live_check --key-file secrets/testnet.env --coin ETH --taker
+
+# mainnet, real money — resting orders sit 2 % away from mid unless --taker is given
+build/release/examples/hl_live_check --key-file secrets/prod.env --coin @107 --notional 11 \
+    --taker --expiry-ms 30000 --mainnet --i-understand-this-trades-real-money
+```
+
+Spot pairs are named `@<index>` (`PURR/USDC` is the exception, index 0); passing such a name loads
+`spotMeta` automatically, and `--spot` forces it. Perp-only steps are skipped for a spot pair.
+
+### What a real mainnet run looks like
+
+Below is an unedited run against mainnet spot HYPE/USDC on 2026-09-19 from an ordinary, non-co-located
+host, with a $30 account. Only the two addresses are redacted.
+
+```text
+hyperliquid-cpp 1.3.0 — live acceptance check on MAINNET (@107, WebSocket transport, presign 64, expiresAfter)
+[hl][INFO] exchange: starting (mainnet, account 0x<master>, signer 0x<agent>)
+
+▶ connect, load metadata, subscribe user streams
+[hl][INFO] exchange: account value 0 USDC, 0 open positions
+[hl][INFO] exchange: 563 assets loaded
+[hl][INFO] exchange: ready
+   PASS — account 0x<master>, 563 assets, @107 asset=10107 szDecimals=2
+
+▶ market data: order book
+   PASS — bid 93.116 / ask 93.117, spread 0.11 bps, size to use 0.12
+
+▶ place post-only order far from mid → Open with oid
+   PASS — px 91.254, state Open, oid 549961856293
+   ⏱  order ×1 706.9 ms | build+sign ×1 0.016 ms | step 707 ms
+
+▶ info: orderStatus and frontendOpenOrders see the order
+   PASS — orderStatus: status open, oid 549961856293 | frontendOpenOrders: listed: oid 549961856293 px 91.254 sz 0.12 tif Alo
+
+▶ modify price and size in place (cloid preserved)
+   PASS — px 90.323, sz 0.24, oid 549961856293 → 549961870250, state Open
+   ⏱  modify ×1 688.7 ms | build+sign ×1 0.008 ms | step 689 ms
+
+▶ cancel by cloid → Canceled
+   PASS — state Canceled
+   ⏱  cancel ×1 708.9 ms | build+sign ×1 0.008 ms | step 709 ms
+
+▶ batch of 2 orders in one action, then cancelAll
+   PASS — states Open Open → cancelAll cleared all
+   ⏱  order ×1 722.1 ms, cancel ×1 711.2 ms | build+sign ×2 0.009 ms | step 1433 ms
+
+▶ post-only order that crosses → rejected by the venue
+   PASS — Rejected: Post only order would have immediately matched, bbo was 93.116@93.124. asset=10107
+   ⏱  order ×1 672.6 ms | build+sign ×1 0.007 ms | step 673 ms
+
+▶ local validation rejects invalid price/size/coin before signing
+   PASS — unknown coin 'NOSUCHCOIN' | invalid price 1234.56789 for @107 (nearest valid 1234.6) | price and size must be positive
+
+▶ IOC order that crosses → fill, position and fees
+      · fill Buy 0.12 @ 93.125 (taker, fee 0.000084)
+   PASS — Filled, filled 0.12 @ 93.125, position 0.12991601, fills 1, fee 0.000084 HYPE
+   ⏱  order ×1 944.2 ms | build+sign ×1 0.007 ms | step 1236 ms
+
+▶ sell the acquired spot balance back with an IOC
+      · fill Sell 0.12 @ 93.124 (taker, fee 0.00782241)
+   PASS — Filled, position now 0.00983201 (below one lot — unsellable dust, the spot buy fee was charged in the base token)
+   ⏱  order ×1 985.7 ms | build+sign ×1 0.007 ms | step 1057 ms
+
+▶ scheduleCancel (dead-man's switch): arm and clear
+[hl][WARN] exchange: action failed (Venue): Cannot set scheduled cancel time until enough volume traded. Required: $1000000. Traded: $43.73.
+   PASS — arm: … | clear: …
+   ⏱  other ×2 1010.0 ms | build+sign ×2 0.013 ms | step 2020 ms
+
+▶ updateLeverage
+   SKIP — leverage is a perp-only action; @107 is a spot pair
+
+▶ reconnect: drop the private socket, reconcile a live order
+[hl][WARN] ws: wss://api.hyperliquid.xyz/ws closed: live-check forced reconnect
+[hl][INFO] exchange: ready
+   PASS — reconnected, reconciles 0 → 1, order Open
+   ⏱  order ×1 694.2 ms, cancel ×1 694.7 ms | build+sign ×2 0.008 ms | step 2783 ms
+
+▶ no orders left on the venue
+   PASS — 0 open orders on the venue
+
+▶ no leftover position (a resting test order may have been filled)
+   PASS — only 0.00983201 left — below one lot, cannot be sold
+
+══ live check summary ═══════════════════════════════════
+  … 15 steps, all PASS …
+  ---------------------------------------------------
+  actions 12 (0 via HTTP), errors 2, timeouts 0, reconciles 1
+  signatures 12 precomputed-nonce / 0 deterministic
+  --- latency (round trip includes the network to the venue) ---
+  build+sign   n=12   mean    0.009 ms   min    0.007   max    0.019   last    0.009
+  order        n=6    mean  787.619 ms   min  672.600   max  985.703   last  694.201
+  cancel       n=3    mean  704.963 ms   min  694.739   max  711.225   last  694.739
+  modify       n=1    mean  688.715 ms   min  688.715   max  688.715   last  688.715
+  other        n=2    mean 1010.007 ms   min 1002.368   max 1017.647   last 1002.368
+  order updates 28, fills 2, md messages 66 (parse errors 0)
+  0 of 15 steps failed
+═════════════════════════════════════════════════════════
+```
+
+**Read the latency block, not the marketing.** `build+sign` is everything this library does for an
+action — encode, keccak, EIP-712, ECDSA, frame — and it is **9 µs**. The round trip is **700–1000 ms**,
+because that is the venue: block production plus the network. The library is four orders of magnitude
+away from being the bottleneck, which is exactly why the signing work went into the precomputed-nonce
+path and no further. Budget your own strategy against ~0.8 s to know an order rested, not against µs.
+
+Three venue behaviours the run makes concrete, all of them surprises for someone arriving from a CEX:
+
+- **The spot taker fee on a buy is charged in the base token.** Buy 0.12 HYPE and 0.11991601 arrives.
+  Selling "everything back" therefore always leaves a remainder, and when that remainder is smaller
+  than one lot it cannot be sold at all. Above it is 0.0098 HYPE, worth about \$0.92, permanently stuck.
+  Size spot round trips with this in mind.
+- **`scheduleCancel` needs \$1 M of traded volume.** The dead-man's switch is not available to a new
+  account; the run treats the refusal as a pass because the action, signature and error path are what
+  it is checking.
+- **Spot has no shorting and no leverage.** A sell needs the base token in the balance, and
+  `updateLeverage` does not apply — the run skips it rather than failing.
+
+### Same run, other instruments
+
+| Coin | What it exercises | Result |
+|---|---|---|
+| `@107` HYPE/USDC | spot, szDecimals 2, WebSocket transport, `--taker` with real fills, `expiresAfter` | 15/15 |
+| `@142` UBTC/USDC | spot, szDecimals 5, five-figure price | 13/13 |
+| `@151` UETH/USDC | spot, szDecimals 4, **`--transport http`** (10 of 10 actions over HTTP) | 13/13 |
+
+Perp coins (`BTC`, `ETH`, `HYPE`, …) take the same run; they need a funded perp wallet, which is a
+separate balance from spot. This library cannot move funds between them — `usdClassTransfer` is a
+user-signed action it deliberately does not implement ([COVERAGE.md §5](COVERAGE.md#5-deliberately-excluded)),
+so do it in the UI.
+
+## 5. Docker
 
 The `Dockerfile` has three stages:
 
@@ -117,18 +257,48 @@ Notes:
 - `docker run --init` (or `--init` in compose) forwards Ctrl-C/SIGTERM properly so the quoter can cancel its
   orders before exiting; `docker stop` sends SIGTERM and waits 10 s by default — enough for the 5 s cancel drain.
 - The image sets `SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt`.
-- Use `--network host` and `--cpuset-cpus` for latency-sensitive runs ([§7](#7-low-latency-deployment)).
+- Use `--network host` and `--cpuset-cpus` for latency-sensitive runs ([§8](#8-low-latency-deployment)).
 
-## 5. Credentials
+## 6. Credentials
+
+Start from the annotated template in the repository root:
+
+```bash
+cp credentials.env.example secrets/prod.env    # secrets/ is gitignored
+chmod 600 secrets/prod.env
+```
 
 - Use an **API (agent) wallet** per environment (testnet and mainnet are separate): it can trade but not
-  withdraw and can be revoked. `privateKey` = agent key, `accountAddress` = master account.
+  withdraw and can be revoked. `privateKey` = agent key, `accountAddress` = **master account**.
+- `HL_ACCOUNT_ADDRESS` is the account the agent trades *for*, never the agent's own address. Get it wrong
+  and orders go to the master while fills, positions and balances are read from the agent address, which
+  holds nothing: the account looks empty while real orders rest on the venue. The client logs an error
+  naming both addresses, but it does not stop. Ask the venue which is which:
+  `{"type":"userRole","user":"<agent>"}` answers `{"role":"agent","data":{"user":"<master>"}}`.
+  Omitting `HL_ACCOUNT_ADDRESS` entirely is safe — the client then adopts the master it is told about.
 - Supply keys via environment variables, a key file with mode `600`, or your secret manager — never as
   command-line arguments (visible in `ps`) and never in images or git.
 - Two processes must not share one signing key: nonces are generated per process and could collide. Use one
   agent wallet per process.
 
-## 6. Configuration reference for your own application
+### Choosing the network
+
+The network is a program setting, not part of the credentials file, so the same file cannot be pointed at
+the wrong venue by accident.
+
+| | Testnet | Mainnet |
+|---|---|---|
+| `ExchangeConfig::network`, `MarketDataConfig::network` | `hl::Network::Testnet` (**the default**) | `hl::Network::Mainnet` |
+| REST (`restUrl(network)`) | `https://api.hyperliquid-testnet.xyz` | `https://api.hyperliquid.xyz` |
+| WebSocket (`wsUrl(network)`) | `wss://api.hyperliquid-testnet.xyz/ws` | `wss://api.hyperliquid.xyz/ws` |
+| `hl_live_check`, `hl_testnet_quoter` | default | `--mainnet --i-understand-this-trades-real-money` |
+| `hl_book_printer` (read-only) | `--testnet` | default |
+
+To reach anything else — a proxy, a recorded mock, a private gateway — set the overrides instead of the
+network: `ExchangeConfig::restUrlOverride` and `wsUrlOverride`, `MarketDataConfig::urlOverride`. They take
+precedence over `network`; an invalid `restUrlOverride` throws from the `ExchangeClient` constructor.
+
+## 7. Configuration reference for your own application
 
 Minimal wiring of both clients on one loop:
 
@@ -170,7 +340,7 @@ loop.run();
 | `TlsOptions::connectTimeoutMs` | 10 s total, split across resolved addresses |
 | `hl::setLogLevel` | `Info` in production, `Debug` when diagnosing |
 
-## 7. Low-latency deployment
+## 8. Low-latency deployment
 
 The venue's block time (~0.2 s) bounds end-to-end latency, but a quiet, predictable client keeps queue
 position and reaction time consistent:
@@ -198,7 +368,7 @@ position and reaction time consistent:
    compaction jitter if observed.
 7. Host networking in containers (`--network host`).
 
-## 8. Running as a service (systemd)
+## 9. Running as a service (systemd)
 
 ```ini
 # /etc/systemd/system/hl-quoter.service
@@ -229,7 +399,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now hl-quoter
 journalctl -u hl-quoter -f
 ```
 
-## 9. Logging and monitoring
+## 10. Logging and monitoring
 
 - Library log lines go through `hl::setLogSink` (default: stderr, `[hl][LEVEL] message`). The library logs
   only on the control path: connects, reconnects, failed actions, reconciliation problems — never per message.
@@ -247,7 +417,7 @@ journalctl -u hl-quoter -f
 | `ExchangeClient::stats().addressUnitsUsed` | order/cancel entries submitted | compare with traded volume: the budget grows by 1 per USDC |
 | `ExchangeClient::isReady()` | readiness | false for longer than the reconnect backoff |
 
-## 10. Shutdown and restarts
+## 11. Shutdown and restarts
 
 1. Stop generating new orders.
 2. `exchange.cancelAll()` and run the loop until `liveOrders()` is empty (bounded wait).
@@ -262,23 +432,24 @@ resting by the previous process appear as **external** orders once they change (
 `info().openOrders(user)` at start-up and cancel them). With `scheduleCancel` active, orphaned orders are
 removed by the venue automatically.
 
-## 11. Production checklist
+## 12. Production checklist
 
 - [ ] `hl_live_check --taker` passes against the target network with the production configuration
 - [ ] Separate agent wallet per environment and per process; keys outside images and repositories
-- [ ] `accountAddress` is the **master** account of the agent wallet (the client logs a mismatch at start-up)
+- [ ] `accountAddress` is the **master** account of the agent wallet, confirmed with `{"type":"userRole"}` — the client logs a mismatch at start-up but still trades
 - [ ] Tested on testnet with the same binary and configuration
 - [ ] `scheduleCancel` dead-man's switch refreshed by the strategy
 - [ ] Position and loss limits enforced in the strategy (the connector does not impose risk limits)
 - [ ] Rate limits watched: `rateLimitStatus()` monitored; cancel batches are split at 40 entries automatically; WebSocket ≤ 2 000 messages/min
 - [ ] Liquidation handling wired (`ExchangeListener::onLiquidation`)
-- [ ] Counters from §9 monitored and alerted
+- [ ] Counters from §10 monitored and alerted, including the `…RoundTrip` latency counters
+- [ ] Order-path latency budget set against the venue's real round trip (~0.7–1.0 s), not against the library's microseconds
 - [ ] Clean shutdown path cancels orders (SIGTERM tested)
 - [ ] CA bundle available (`SSL_CERT_FILE`) on minimal hosts
 - [ ] Clock synchronised (chrony/NTP) — nonces are wall-clock milliseconds
 - [ ] `precomputedNonces` sized so `signingStats().deterministic` stays flat
 
-## 12. Troubleshooting
+## 13. Troubleshooting
 
 | Symptom | Cause / fix |
 |---|---|

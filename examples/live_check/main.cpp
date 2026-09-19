@@ -10,6 +10,7 @@
 // Orders are placed far from the mid (default 2 %) so nothing executes unintentionally; --taker
 // additionally sends one small IOC order that is expected to trade.
 
+#include <chrono>
 #include <cinttypes>
 #include <cstdio>
 #include <cstdlib>
@@ -79,9 +80,47 @@ public:
     void step(const std::string& name, const std::function<bool(std::string&)>& body) {
         std::printf("\n▶ %s\n", name.c_str());
         StepResult r{name, false, {}};
+        const hl::ExchangeClient::Stats before = ex_->stats();
+        const auto startedAt = std::chrono::steady_clock::now();
         r.passed = body(r.detail);
+        const double wallMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - startedAt).count();
         std::printf("   %s%s%s\n", r.passed ? "PASS" : "FAIL", r.detail.empty() ? "" : " — ", r.detail.c_str());
+        printLatency(before, ex_->stats(), wallMs);
         results_.push_back(std::move(r));
+    }
+
+    /// Per-step latency: what the venue round-trip cost for each action class this step issued,
+    /// and how much of that was local work (encode + keccak + ECDSA + frame).
+    static void printLatency(const hl::ExchangeClient::Stats& before, const hl::ExchangeClient::Stats& after,
+                             double wallMs) {
+        const auto delta = [](const hl::ExchangeClient::LatencyStats& a,
+                              const hl::ExchangeClient::LatencyStats& b) -> std::pair<std::uint64_t, double> {
+            const std::uint64_t n = b.count - a.count;
+            return {n, n == 0 ? 0.0 : static_cast<double>(b.sumUs - a.sumUs) / static_cast<double>(n) / 1000.0};
+        };
+        std::string line;
+        const std::pair<const char*, std::pair<std::uint64_t, double>> classes[] = {
+            {"order", delta(before.orderRoundTrip, after.orderRoundTrip)},
+            {"cancel", delta(before.cancelRoundTrip, after.cancelRoundTrip)},
+            {"modify", delta(before.modifyRoundTrip, after.modifyRoundTrip)},
+            {"other", delta(before.otherRoundTrip, after.otherRoundTrip)},
+        };
+        char buf[128];
+        for (const auto& [label, d] : classes) {
+            if (d.first == 0) {
+                continue;
+            }
+            std::snprintf(buf, sizeof(buf), "%s%s ×%" PRIu64 " %.1f ms", line.empty() ? "" : ", ", label, d.first,
+                          d.second);
+            line += buf;
+        }
+        if (line.empty()) {
+            return;  // a step that issued no action has nothing to time
+        }
+        const auto sign = delta(before.buildAndSign, after.buildAndSign);
+        std::snprintf(buf, sizeof(buf), " | build+sign ×%" PRIu64 " %.3f ms | step %.0f ms", sign.first, sign.second,
+                      wallMs);
+        std::printf("   ⏱  %s%s\n", line.c_str(), buf);
     }
 
     [[nodiscard]] const std::vector<StepResult>& results() const noexcept { return results_; }
@@ -104,6 +143,14 @@ public:
     }
 
     [[nodiscard]] hl::Decimal size() const { return asset()->roundSz(notional_.div(book()->mid()), hl::RoundingMode::Up); }
+
+    /// A balance smaller than one lot cannot be sold at all. On spot the taker fee of a buy is
+    /// charged in the base token, so a buy-then-sell round trip always ends holding such a
+    /// remainder; treating it as an open position would be wrong.
+    [[nodiscard]] bool isDust(hl::Decimal size) const {
+        const hl::Decimal abs = size.isNegative() ? hl::Decimal{} - size : size;
+        return asset()->roundSz(abs, hl::RoundingMode::Down).isZero();
+    }
 
     [[nodiscard]] hl::OrderRequest request(hl::Side side, hl::Decimal px, hl::Tif tif = hl::Tif::Alo) const {
         hl::OrderRequest r;
@@ -146,6 +193,7 @@ int main(int argc, char** argv) {
     bool mainnet = false;
     bool mainnetAck = false;
     bool verbose = false;
+    bool spotAssets = false;
     std::size_t presign = 64;
     std::int64_t expiryMs = 0;
     std::uint32_t priorityRate = 0;
@@ -186,6 +234,8 @@ int main(int argc, char** argv) {
             mainnet = true;
         } else if (a == "--i-understand-this-trades-real-money") {
             mainnetAck = true;
+        } else if (a == "--spot") {
+            spotAssets = true;
         } else if (a == "--verbose") {
             verbose = true;
             hl::setLogLevel(hl::LogLevel::Debug);
@@ -195,6 +245,7 @@ int main(int argc, char** argv) {
                         "                     [--flatten]   cancel all orders and close the position, then exit\n"
                         "                     [--expiry-ms N] attach expiresAfter = now + N to every action\n"
                         "                     [--priority-rate N] order priority fee, fraction of 1e8 (10000 = 1 bp)\n"
+                        "                     [--spot]      load spotMeta (implied by a \"@<index>\" or \"A/B\" coin)\n"
                         "                     [--mainnet --i-understand-this-trades-real-money]\n");
             return 0;
         } else {
@@ -226,6 +277,9 @@ int main(int argc, char** argv) {
     exCfg.privateKey = credentials.privateKey;
     exCfg.accountAddress = credentials.accountAddress;
     exCfg.vaultAddress = credentials.vaultAddress;
+    // Spot pairs are named "@<index>" ("PURR/USDC" for index 0); their metadata comes from a
+    // separate `spotMeta` request that the client only issues when asked.
+    exCfg.loadSpotAssets = spotAssets || coin.front() == '@' || coin.find('/') != std::string::npos;
     exCfg.precomputedNonces = presign;
     exCfg.actionExpiryMs = expiryMs;
     exCfg.transport = httpTransport ? hl::ActionTransport::Http : hl::ActionTransport::WebSocket;
@@ -301,6 +355,13 @@ int main(int argc, char** argv) {
                  " szDecimals=" + std::to_string(a != nullptr ? a->szDecimals : -1);
         return a != nullptr;
     });
+    if (runner.asset() == nullptr) {
+        // Every later step prices and sizes through AssetInfo; continuing would dereference null.
+        std::printf("\n   unknown coin %s — is it a spot pair? pass --spot, or use the venue's name for it\n",
+                    coin.c_str());
+        std::printf("\n══ live check summary ═══════════════════════════════════\n  FAIL unknown coin\n");
+        return 1;
+    }
 
     runner.step("market data: order book", [&](std::string& detail) {
         if (!runner.waitFor([&] { return runner.book() != nullptr && runner.book()->isValid(); })) {
@@ -434,9 +495,15 @@ int main(int argc, char** argv) {
     });
 
     // ── 6. batch + cancelAll ────────────────────────────────────────────────
+    const bool isSpot = runner.asset()->kind == hl::AssetInfo::Kind::Spot;
+
     runner.step("batch of 2 orders in one action, then cancelAll", [&](std::string& detail) {
-        std::vector<hl::OrderRequest> batch{runner.request(hl::Side::Buy, runner.priceAway(hl::Side::Buy, offsetBps)),
-                                            runner.request(hl::Side::Sell, runner.priceAway(hl::Side::Sell, offsetBps))};
+        // Spot has no shorting: a sell needs the base token in the balance, which a USDC-funded
+        // test account does not have. Two bids at different prices exercise the same batching.
+        std::vector<hl::OrderRequest> batch{
+            runner.request(hl::Side::Buy, runner.priceAway(hl::Side::Buy, offsetBps)),
+            isSpot ? runner.request(hl::Side::Buy, runner.priceAway(hl::Side::Buy, offsetBps * 1.5))
+                   : runner.request(hl::Side::Sell, runner.priceAway(hl::Side::Sell, offsetBps))};
         auto placed = ex->placeOrders(batch);
         if (!placed) {
             detail = placed.error().message;
@@ -458,7 +525,11 @@ int main(int argc, char** argv) {
         bool bothOpen = true;
         for (const auto& c : placed.value()) {
             const hl::Order* o = ex->findOrder(c);
-            states += std::string{hl::toString(o->state)} + " ";
+            states += std::string{hl::toString(o->state)};
+            if (!o->lastError.empty()) {
+                states += "(" + o->lastError + ")";
+            }
+            states += " ";
             bothOpen &= o->state == hl::OrderState::Open;
         }
         if (hl::Error e = ex->cancelAll(coin)) {
@@ -541,7 +612,8 @@ int main(int argc, char** argv) {
             return o->state == hl::OrderState::Filled && streamed;
         });
 
-        runner.step("close the position with a reduce-only IOC", [&](std::string& detail) {
+        runner.step(isSpot ? "sell the acquired spot balance back with an IOC"
+                           : "close the position with a reduce-only IOC", [&](std::string& detail) {
             const hl::Decimal pos = ex->position(coin);
             if (pos.isZero()) {
                 detail = "no position to close";
@@ -552,7 +624,8 @@ int main(int argc, char** argv) {
                                                   runner.priceAway(isLong ? hl::Side::Sell : hl::Side::Buy, -50.0),
                                                   hl::Tif::Ioc);
             req.sz = runner.asset()->roundSz(isLong ? pos : -pos, hl::RoundingMode::Down);
-            req.reduceOnly = true;
+            // Spot has no positions to reduce: the flag is a perp concept and the venue rejects it.
+            req.reduceOnly = !isSpot;
             auto placed = ex->placeOrder(req);
             if (!placed) {
                 detail = placed.error().message;
@@ -563,9 +636,12 @@ int main(int argc, char** argv) {
                 return o != nullptr && !o->isLive();
             });
             // The closing fill may arrive after the acknowledgement — wait for the position to flatten.
-            const bool flat = runner.waitFor([&] { return ex->position(coin).isZero(); }, 10'000);
+            const bool flat = runner.waitFor(
+                [&] { return ex->position(coin).isZero() || runner.isDust(ex->position(coin)); }, 10'000);
             const hl::Order* o = ex->findOrder(placed.value());
-            detail = std::string{hl::toString(o->state)} + ", position now " + ex->position(coin).toString() +
+            const hl::Decimal left = ex->position(coin);
+            detail = std::string{hl::toString(o->state)} + ", position now " + left.toString() +
+                     (left.isZero() || !runner.isDust(left) ? "" : " (below one lot — unsellable dust, the spot buy fee was charged in the base token)") +
                      (o->lastError.empty() ? "" : ", " + o->lastError);
             return o->state == hl::OrderState::Filled && flat;
         });
@@ -595,7 +671,10 @@ int main(int argc, char** argv) {
         return true;
     });
 
-    runner.step("updateLeverage", [&](std::string& detail) {
+    if (isSpot) {
+        std::printf("\n▶ updateLeverage\n   SKIP — leverage is a perp-only action; %s is a spot pair\n", coin.c_str());
+    }
+    if (!isSpot) runner.step("updateLeverage", [&](std::string& detail) {
         bool done = false;
         std::string text;
         if (hl::Error e = ex->updateLeverage(coin, 5, true, [&](const hl::Result<hl::ExchangeResponse>& r) {
@@ -700,6 +779,10 @@ int main(int argc, char** argv) {
 
     // ── 13. leave the account flat ──────────────────────────────────────────
     runner.step("no leftover position (a resting test order may have been filled)", [&](std::string& detail) {
+        if (const hl::Decimal left = ex->position(coin); !left.isZero() && runner.isDust(left)) {
+            detail = "only " + left.toString() + " left — below one lot, cannot be sold";
+            return true;
+        }
         if (!runner.taker() && !ex->position(coin).isZero()) {
             detail = "position " + ex->position(coin).toString() +
                      " left open — rerun with --taker or --flatten to close it";
@@ -723,6 +806,20 @@ int main(int argc, char** argv) {
                 st.actionsSent, st.actionsViaHttp, st.actionErrors, st.timeouts, st.reconciles);
     std::printf("  signatures %" PRIu64 " precomputed-nonce / %" PRIu64 " deterministic\n", sig.precomputed,
                 sig.deterministic);
+    const auto latencyRow = [](const char* label, const hl::ExchangeClient::LatencyStats& l) {
+        if (l.count == 0) {
+            return;
+        }
+        std::printf("  %-12s n=%-4" PRIu64 " mean %8.3f ms   min %8.3f   max %8.3f   last %8.3f\n", label, l.count,
+                    static_cast<double>(l.meanUs()) / 1000.0, static_cast<double>(l.minUs) / 1000.0,
+                    static_cast<double>(l.maxUs) / 1000.0, static_cast<double>(l.lastUs) / 1000.0);
+    };
+    std::printf("  --- latency (round trip includes the network to the venue) ---\n");
+    latencyRow("build+sign", st.buildAndSign);
+    latencyRow("order", st.orderRoundTrip);
+    latencyRow("cancel", st.cancelRoundTrip);
+    latencyRow("modify", st.modifyRoundTrip);
+    latencyRow("other", st.otherRoundTrip);
     std::printf("  order updates %" PRIu64 ", fills %zu, md messages %" PRIu64 " (parse errors %" PRIu64 ")\n",
                 runner.updates(), runner.fills().size(), md.parserStats().messages, md.parserStats().parseErrors);
     std::printf("  %d of %zu steps failed\n", failed, runner.results().size());

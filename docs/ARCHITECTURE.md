@@ -220,12 +220,18 @@ decimals; sizes have `szDecimals` decimals.
 
 | Build | Tests | Result |
 |---|---|---|
-| Clang 21, Release | 188 | all passed |
-| GCC 11.5 (system), Release | 188 | all passed |
-| GCC 15, Release | 188 | all passed |
-| Clang 21, AddressSanitizer + UBSan | 188 | all passed, no reports |
-| Clang 21, ThreadSanitizer (library tests; examples not built) | 182 | all passed, no reports |
-| Docker build stage (Ubuntu 24.04, GCC 13) | 188 | all passed |
+| Clang 21, Release | 189 | all passed |
+| GCC 11.5 (system), Release | 189 | all passed |
+| GCC 15, Release | 189 | all passed |
+| Clang 21, AddressSanitizer + UBSan | 189 | all passed, no reports |
+| Clang 21, ThreadSanitizer (library tests; examples not built) | 183 | all passed, no reports |
+| Docker build stage (Ubuntu 24.04, GCC 13) | 189 | all passed |
+
+| Live check against Hyperliquid mainnet (spot, real money) | Result |
+|---|---|
+| `hl_live_check --coin @107 --notional 11 --taker --expiry-ms 30000 --mainnet …` (HYPE/USDC) | **15/15 steps passed** — including two real taker fills and `expiresAfter` on every action |
+| `hl_live_check --coin @142 …` (UBTC/USDC, szDecimals 5) | **13/13 steps passed** |
+| `hl_live_check --coin @151 --transport http …` (UETH/USDC, all actions over HTTP) | **13/13 steps passed** |
 
 | Live check against Hyperliquid testnet | Result |
 |---|---|

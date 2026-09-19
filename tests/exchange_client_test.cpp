@@ -2,6 +2,8 @@
 // real HTTP/WebSocket stack, scripted venue responses).
 #include <gtest/gtest.h>
 
+#include <functional>
+
 #include <map>
 #include <optional>
 #include <regex>
@@ -178,11 +180,18 @@ struct FakeHyperliquid {
 
 struct Listener : hl::ExchangeListener {
     int ready{0};
+    /// Set from inside onReady() so a test can assert what the client knew at that instant.
+    std::function<void()> onReadyHook;
     int disconnects{0};
     std::vector<hl::Order> updates;
     std::vector<hl::Fill> fills;
     std::vector<hl::Error> errors;
-    void onReady() override { ++ready; }
+    void onReady() override {
+        ++ready;
+        if (onReadyHook) {
+            onReadyHook();
+        }
+    }
     void onDisconnected(std::string_view) override { ++disconnects; }
     void onOrderUpdate(const hl::Order& o) override { updates.push_back(o); }
     void onFill(const hl::Fill& f) override { fills.push_back(f); }
@@ -225,6 +234,7 @@ protected:
         return r;
     }
 
+    hl::ExchangeClient* clientUnderTest{nullptr};
     hl::EventLoop loop;
     FakeHyperliquid fake{loop};
     Listener listener;
@@ -633,6 +643,27 @@ TEST_F(ExchangeClientTest, AdoptsOrdersAlreadyOpenOnTheVenue) {
     // …and it can be canceled like any other order.
     ASSERT_FALSE(client->cancel(o->cloid));
     ASSERT_TRUE(runUntil(loop, [&] { return client->liveOrders("ETH").empty(); }));
+}
+
+// Readiness must not be announced before the start-up listing of existing orders has been applied:
+// an application that cancels or reconciles on onReady() would otherwise act on a table it believes
+// is complete and silently leave those orders working on the venue.
+TEST_F(ExchangeClientTest, OrdersOpenOnTheVenueAreAdoptedBeforeOnReadyFires) {
+    fake.openOrdersResponse =
+        R"([{"coin":"ETH","side":"A","limitPx":"3000.0","sz":"1.0","oid":4242,"timestamp":1700000000000,)"
+        R"("origSz":"1.0","reduceOnly":false,"orderType":"Limit","tif":"Gtc","isTrigger":false,"triggerPx":"0.0"}])";
+    std::size_t liveAtReady = 0;
+    bool readyFlagAtReady = false;
+    listener.onReadyHook = [&] {
+        liveAtReady = clientUnderTest->liveOrders().size();
+        readyFlagAtReady = clientUnderTest->isReady();
+    };
+    auto client = makeClient();
+    clientUnderTest = client.get();
+    client->start();
+    ASSERT_TRUE(runUntil(loop, [&] { return listener.ready > 0; }));
+    EXPECT_EQ(liveAtReady, 1U) << "cancelAll() from onReady() must see orders the venue already has open";
+    EXPECT_TRUE(readyFlagAtReady) << "isReady() must agree with the callback";
 }
 
 TEST_F(ExchangeClientTest, CancelsCarryTheFastFlagExceptForTriggerOrders) {

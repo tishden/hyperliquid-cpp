@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -287,6 +288,31 @@ public:
     [[nodiscard]] Cloid nextCloid() noexcept;
 
     /// Counters.
+    /**
+     * @brief Latency of one class of action, in microseconds.
+     *
+     * Measured with a steady clock, so it is unaffected by wall-clock adjustments. The round-trip
+     * figures span the moment the client starts building the action to the moment the venue's
+     * response for it is parsed, and therefore include network time to the venue and back.
+     */
+    struct LatencyStats {
+        std::uint64_t count{0};
+        std::uint64_t sumUs{0};
+        std::uint32_t minUs{0};
+        std::uint32_t maxUs{0};
+        std::uint32_t lastUs{0};
+        [[nodiscard]] std::uint32_t meanUs() const noexcept {
+            return count == 0 ? 0 : static_cast<std::uint32_t>(sumUs / count);
+        }
+        void add(std::uint32_t us) noexcept {
+            minUs = (count == 0 || us < minUs) ? us : minUs;
+            maxUs = us > maxUs ? us : maxUs;
+            lastUs = us;
+            sumUs += us;
+            ++count;
+        }
+    };
+
     struct Stats {
         std::uint64_t actionsSent{0};
         std::uint64_t actionsViaHttp{0};
@@ -296,6 +322,14 @@ public:
         std::uint64_t reconciles{0};
         std::uint64_t rateLimitHits{0};    ///< HTTP 429 responses (the queue pauses after each)
         std::uint64_t addressUnitsUsed{0}; ///< order/cancel entries submitted (the venue's address-based unit)
+        /// Local work only: build the action, hash it, sign it and assemble the frame.
+        LatencyStats buildAndSign{};
+        /// Build+sign+network+venue, per action class. Cancels are the cheapest, orders the most
+        /// interesting; `other` covers leverage, scheduleCancel and the rest.
+        LatencyStats orderRoundTrip{};
+        LatencyStats cancelRoundTrip{};
+        LatencyStats modifyRoundTrip{};
+        LatencyStats otherRoundTrip{};
     };
     [[nodiscard]] const Stats& stats() const noexcept { return stats_; }
     /**
@@ -319,6 +353,7 @@ private:
         ActionCallback callback{};
         EventLoop::TimerId timer{0};
         bool viaWebSocket{false};
+        std::chrono::steady_clock::time_point sentAt{};
     };
 
     struct Tracked {
@@ -415,6 +450,10 @@ private:
     bool userFillsAcked_{false};
     bool ready_{false};
     bool wasReadyBefore_{false};
+    /// Set once the start-up `openOrders` listing has been applied (or has failed). Readiness
+    /// waits for it, so `liveOrders()` and `cancelAll()` are correct from the first `onReady()`.
+    bool ordersAdopted_{false};
+    bool adoptionInFlight_{false};
     bool fillsSnapshotSeen_{false};
     EventLoop::TimerId evictionTimer_{0};
     EventLoop::TimerId rateLimitTimer_{0};

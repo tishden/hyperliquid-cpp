@@ -19,7 +19,7 @@ order management and EIP-712 signing — in one dependency-light static library.
 | **Account & risk** | liquidations and venue-initiated cancels (`userEvents`) · funding payments · request-budget tracking with 429 / `Retry-After` handling · account state, open orders, order status, fills by time, historical orders, funding history, predicted fundings, candles, spot balances, rate limits |
 | **Signing** | byte-identical to the official Python SDK (golden-vector tested) · optional precomputed-nonce ECDSA: 0.17 µs per signature · agent (API) wallets · vaults / sub-accounts · `expiresAfter` |
 | **Venue rules** | asset ids resolved from `meta`/`spotMeta` · exact price (5 significant figures) and size rounding |
-| **Engineering** | exact fixed-point decimals (no floating point on the wire path) · single-threaded epoll reactor, re-entrancy-safe callbacks · 188 tests incl. end-to-end against a mock venue and a 17-step live acceptance run · ASan/UBSan/TSan clean · GCC 11/15, Clang 21 · `-Werror` |
+| **Engineering** | exact fixed-point decimals (no floating point on the wire path) · single-threaded epoll reactor, re-entrancy-safe callbacks · 189 tests incl. end-to-end against a mock venue and a 17-step live acceptance run · ASan/UBSan/TSan clean · GCC 11/15, Clang 21 · `-Werror` |
 | **Not included, by design** | the library cannot move funds: withdrawals, transfers and staking need EIP-712 user-signed actions it does not implement, so a compromised strategy process cannot drain the account ([docs/COVERAGE.md](docs/COVERAGE.md)) |
 
 ## Performance
@@ -36,10 +36,12 @@ Measured on a 2012 Intel i7-3820, single core, Clang 21 `-O3` (current server co
 | Exact decimal parse (vs `strtod` 101 ns) | **19 ns** |
 | Order → signed WebSocket frame (msgpack, Keccak, EIP-712, ECDSA) | 42 µs → **3.3 µs** with precomputed nonces |
 
-Verified: 188 tests on Clang 21 / GCC 11 / GCC 15, ASan+UBSan and ThreadSanitizer clean, plus a **17-step live
-acceptance run on testnet** (resting orders, amendments, cancels, batches, post-only rejection, real taker and
-maker fills with fees and positions, forced reconnect with reconciliation) over both WebSocket and HTTP — see
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#verification-matrix).
+Verified: 189 tests on Clang 21 / GCC 11 / GCC 15, ASan+UBSan and ThreadSanitizer clean, plus scripted live
+acceptance runs — **17/17 steps on testnet perps** and **15/15 on mainnet spot with real money** (resting
+orders, amendments, cancels, batches, post-only rejection, real taker fills with fees, `expiresAfter`, forced
+reconnect with reconciliation) over both WebSocket and HTTP — see
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#verification-matrix) and a full mainnet log in
+[docs/RUNNING.md §4](docs/RUNNING.md#4-acceptance-run-against-a-live-venue).
 
 Hyperliquid's own latency floor is block time (~0.2 s), so the connector never is the bottleneck —
 it leaves the whole budget to your strategy.
@@ -52,7 +54,7 @@ simdjson are fetched and built statically).
 
 ```bash
 scripts/build.sh release           # or: cmake --preset release && cmake --build --preset release
-scripts/test.sh release            # 188 tests, ~5 s
+scripts/test.sh release            # 189 tests, ~5 s
 build/release/examples/hl_book_printer BTC ETH SOL
 build/release/examples/hl_testnet_quoter --dry-run --coin ETH
 ```
@@ -60,7 +62,7 @@ build/release/examples/hl_testnet_quoter --dry-run --coin ETH
 ### Docker
 
 ```bash
-docker build -t hyperliquid-cpp .                  # compiles, runs all 188 tests, produces a ~138 MB runtime image
+docker build -t hyperliquid-cpp .                  # compiles, runs all 189 tests, produces a ~138 MB runtime image
 docker run --rm hyperliquid-cpp hl_book_printer BTC ETH
 docker run --rm hyperliquid-cpp hl_testnet_quoter --dry-run --coin ETH
 docker run --rm -e HL_PRIVATE_KEY -e HL_ACCOUNT_ADDRESS hyperliquid-cpp hl_testnet_quoter --coin ETH --duration 600
@@ -153,7 +155,11 @@ export HL_PRIVATE_KEY=0x…        HL_ACCOUNT_ADDRESS=0x…
 build/release/examples/hl_testnet_quoter --coin ETH --notional 20 --half-spread-bps 8 --duration 600
 ```
 
-Setting up a testnet account and API wallet: [docs/TESTNET.md](docs/TESTNET.md).
+Credentials go in a `secrets/*.env` file (gitignored); copy the annotated
+[credentials.env.example](credentials.env.example), which also explains how to tell an agent wallet
+from the master account it trades for — the most common way to get this wrong. Setting up a testnet
+account and API wallet: [docs/TESTNET.md](docs/TESTNET.md); running against mainnet and what a real
+run looks like: [docs/RUNNING.md §4](docs/RUNNING.md#4-acceptance-run-against-a-live-venue).
 
 ## Documentation
 

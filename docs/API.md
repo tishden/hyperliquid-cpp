@@ -1386,6 +1386,24 @@ validation and no order-table effect; the parsed response goes to `callback`.
 | `reconciles` | Reconciliations started (a whole-table `frontendOpenOrders` sweep counts as one) |
 | `rateLimitHits` | HTTP `429` responses received; the request queue pauses after each ([§7.4](#74-httpclient)) |
 | `addressUnitsUsed` | Address-budget units submitted: one per order or cancel **entry**, one for any other action |
+| `buildAndSign` | `LatencyStats` — local work only: encode the action, hash it, sign it, assemble the frame |
+| `orderRoundTrip`, `cancelRoundTrip`, `modifyRoundTrip`, `otherRoundTrip` | `LatencyStats` — from starting to build an action to parsing the venue's response for it, so **including the network**. `other` covers leverage, `scheduleCancel`, `reserveRequestWeight` and the rest |
+
+| `LatencyStats` member | Meaning |
+|---|---|
+| `count` | Actions of this class measured |
+| `sumUs`, `meanUs()` | Total and mean in microseconds |
+| `minUs`, `maxUs`, `lastUs` | Extremes and the most recent sample |
+
+Measured with `std::chrono::steady_clock`, so a wall-clock adjustment cannot corrupt them; a sample is
+recorded when the action completes, including when it completes with an error or a timeout. An action
+whose response never arrives contributes nothing. There is no percentile tracking — keep your own
+histogram if you need tails; these counters exist so an operator can see drift without one.
+
+Expect the two scales to be far apart. On the reference machine `buildAndSign` is single-digit
+microseconds, while a mainnet round trip measured **672–1076 ms** in a live run
+([RUNNING.md §4](RUNNING.md#4-acceptance-run-against-a-live-venue)): the venue's block production
+dominates by four orders of magnitude.
 
 A response arriving after its action already timed out, or after a disconnect, is ignored — reconciliation
 establishes the true state.

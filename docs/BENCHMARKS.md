@@ -4,6 +4,7 @@
 - [Order entry: from 43 µs to 3.3 µs](#order-entry-from-43-µs-to-33-µs)
 - [Market data](#market-data)
   - [How fast the venue actually feeds you](#how-fast-the-venue-actually-feeds-you)
+  - [What the order path costs end to end, live](#what-the-order-path-costs-end-to-end-live)
 - [Order book](#order-book)
 - [Decimals](#decimals)
 - [Cryptography](#cryptography)
@@ -135,6 +136,24 @@ one because both subscriptions answer on the same `l2Book` channel and would oth
 flip) a single maintained book. Ordinary retail connectivity, no co-location: the intervals are
 venue-side behaviour and should reproduce anywhere, while any absolute one-way delay is not measured
 here at all.
+
+### What the order path costs end to end, live
+
+The benchmarks above are local work. Measured against **mainnet** on 2026-09-19 from an ordinary
+non-co-located host, with the client's own `Stats::…RoundTrip` counters
+([API.md §5](API.md#5-order-management)):
+
+| Action | n | mean | min | max |
+|---|---|---|---|---|
+| build + sign (local only) | 12 | **0.009 ms** | 0.007 | 0.019 |
+| order → venue response | 6 | 787 ms | 673 | 986 |
+| cancel → venue response | 3 | 705 ms | 695 | 711 |
+| modify → venue response | 1 | 689 ms | — | — |
+
+Roughly 0.001 % of the time an order takes is spent in this library; the rest is Hyperliquid producing
+a block and the network getting there. That is the honest reason the optimisation work stopped where it
+did: shaving the remaining microseconds would change nothing you can measure at the venue. The full run
+is in [RUNNING.md §4](RUNNING.md#4-acceptance-run-against-a-live-venue).
 
 ## Order book
 

@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The project follows
 ## [Unreleased]
 
 ### Added
+- **Order-path latency counters.** `ExchangeClient::Stats` gained `buildAndSign` and
+  `orderRoundTrip` / `cancelRoundTrip` / `modifyRoundTrip` / `otherRoundTrip`, each a `LatencyStats`
+  with count, mean, min, max and last in microseconds, measured on a steady clock. `hl_live_check`
+  prints them per step and in its summary, `hl_testnet_quoter` in its status line and summary.
+  Measured live on mainnet: build+sign 9 µs against a 673–1076 ms venue round trip.
+- `credentials.env.example` — a git-tracked, annotated template for `secrets/*.env`, including how to
+  tell an agent wallet from the master account it trades for, and where the network is selected.
+- `hl_live_check` understands spot: a `@<index>` or `A/B` coin name loads `spotMeta` automatically
+  (`--spot` forces it), the batch step uses two bids because spot cannot short, the close step drops
+  `reduceOnly`, `updateLeverage` is skipped, and a sub-lot remainder is reported as unsellable dust
+  rather than a failure. Verified on mainnet against HYPE/USDC, UBTC/USDC and UETH/USDC.
 - `L2BookOptions::fast` — subscribe to the venue's 5-level `l2Book` publish path (`subscribeL2Book`
   and `subscribeBook` both take it; `hl_book_printer --fast` demonstrates it). Measured on mainnet
   BTC and ETH on 2026-09-19: snapshots ~0.54 s apart against ~5.3 s for the default 20-level feed,
@@ -13,6 +24,16 @@ All notable changes to this project are documented here. The project follows
   numbers and says which of the three feeds to use for what.
 - `MarketDataClient::l2BookSubscriptionJson(coin, options)` — the exact string `subscribeL2Book`
   sends, so a subscription made with `nSigFigs` or `fast` can be reproduced for `unsubscribeRaw`.
+
+### Fixed
+- **`onReady()` fired before orders already resting on the venue had been adopted.** The start-up
+  `openOrders` listing is asynchronous, and readiness did not wait for it — measured at 3 s on
+  mainnet. An application that cancels or reconciles on ready (`hl_live_check --flatten` does) saw an
+  empty order table, reported success and left real orders working. Readiness now waits for the
+  listing; a failed listing releases it with a warning. Regression test
+  `OrdersOpenOnTheVenueAreAdoptedBeforeOnReadyFires`.
+- `hl_live_check` dereferenced a null `AssetInfo` and crashed when the coin was unknown to the
+  registry; it now stops after the first step with a message naming the likely cause.
 
 ### Changed
 - All third-party dependencies are now `PRIVATE` in CMake, OpenSSL included. No public header

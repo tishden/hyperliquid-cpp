@@ -1,5 +1,7 @@
 #include "hl/om/ExchangeClient.h"
 
+#include <limits>
+
 #include <openssl/rand.h>
 
 #include <algorithm>
@@ -8,6 +10,20 @@
 #include "hl/core/Log.h"
 
 namespace hl {
+
+namespace {
+
+/// Microseconds between two steady-clock points, clamped into uint32 (~71 minutes).
+std::uint32_t elapsedUs(std::chrono::steady_clock::time_point from, std::chrono::steady_clock::time_point to) {
+    const auto us = std::chrono::duration_cast<std::chrono::microseconds>(to - from).count();
+    if (us < 0) {
+        return 0;
+    }
+    constexpr std::int64_t kMax = std::numeric_limits<std::uint32_t>::max();
+    return static_cast<std::uint32_t>(us > kMax ? kMax : static_cast<std::int64_t>(us));
+}
+
+}  // namespace
 
 namespace {
 
@@ -242,8 +258,11 @@ void ExchangeClient::adoptOpenOrders() {
     // Orders left resting by a previous process (or placed in the UI) are invisible until they
     // change; list them once at start-up so liveOrders()/cancelAll() see the true picture.
     info_.openOrders(user_, [this](const Result<std::vector<OpenOrder>>& r) {
+        adoptionInFlight_ = false;
+        ordersAdopted_ = true;  // do not hold readiness hostage to a failed listing
         if (!r) {
             logf(LogLevel::Warn, "exchange: could not list existing open orders (%s)", r.error().message.c_str());
+            maybeReady();
             return;
         }
         std::size_t adopted = 0;
@@ -285,6 +304,7 @@ void ExchangeClient::adoptOpenOrders() {
         if (adopted != 0) {
             logf(LogLevel::Info, "exchange: adopted %zu order(s) already open on the venue", adopted);
         }
+        maybeReady();
     });
 }
 
@@ -321,11 +341,19 @@ void ExchangeClient::maybeReady() {
         !userFillsAcked_ || (config_.loadSpotAssets && !spotBalancesLoaded_)) {
         return;
     }
+    // Orders left resting by a previous process must be in the table *before* onReady(), or an
+    // application that cancels or reconciles on ready acts on a table it believes is complete and
+    // silently leaves them working. The listing is one more round trip, so readiness waits for it.
+    if (!wasReadyBefore_ && config_.adoptExistingOrders && !ordersAdopted_) {
+        if (!adoptionInFlight_) {
+            adoptionInFlight_ = true;
+            adoptOpenOrders();
+        }
+        return;
+    }
     ready_ = true;
     if (wasReadyBefore_) {
         reconcileAll();
-    } else if (config_.adoptExistingOrders) {
-        adoptOpenOrders();
     }
     wasReadyBefore_ = true;
     logf(LogLevel::Info, "exchange: ready");
@@ -744,6 +772,7 @@ void ExchangeClient::submitAction(const EncodedAction& action, ActionCallback ca
 // ── transport ───────────────────────────────────────────────────────────────
 
 void ExchangeClient::send(const EncodedAction& action, PendingAction pending) {
+    const auto startedAt = std::chrono::steady_clock::now();
     const std::uint64_t id = nextRequestId_++;
     ++stats_.actionsSent;
     countRateLimitUnits(pending);
@@ -754,6 +783,8 @@ void ExchangeClient::send(const EncodedAction& action, PendingAction pending) {
     }
     if (config_.transport == ActionTransport::WebSocket && session_.isOpen()) {
         const std::string frame = builder_.wsPostAction(id, action, nonces_->next(), expiresAfter);
+        pending.sentAt = std::chrono::steady_clock::now();
+        stats_.buildAndSign.add(elapsedUs(startedAt, pending.sentAt));
         pending.viaWebSocket = true;
         pending.timer = loop_.addTimer(config_.requestTimeoutMs, [this, id] {
             if (auto it = pending_.find(id); it != pending_.end()) {
@@ -770,6 +801,8 @@ void ExchangeClient::send(const EncodedAction& action, PendingAction pending) {
         return;
     }
     const std::string payload = builder_.payload(action, nonces_->next(), expiresAfter);
+    pending.sentAt = std::chrono::steady_clock::now();
+    stats_.buildAndSign.add(elapsedUs(startedAt, pending.sentAt));
     ++stats_.actionsViaHttp;
     pending_.emplace(id, std::move(pending));
     exchangeHttp_.postJson("/exchange", payload, [this, id](const Error& err, const HttpResponse& resp) {
@@ -853,6 +886,15 @@ void ExchangeClient::completeAction(std::uint64_t requestId, const Result<Exchan
     pending_.erase(it);
     if (pending.timer != 0) {
         loop_.cancelTimer(pending.timer);
+    }
+    if (pending.sentAt.time_since_epoch().count() != 0) {
+        const std::uint32_t us = elapsedUs(pending.sentAt, std::chrono::steady_clock::now());
+        switch (pending.kind) {
+            case ActionKind::Order:  stats_.orderRoundTrip.add(us);  break;
+            case ActionKind::Cancel: stats_.cancelRoundTrip.add(us); break;
+            case ActionKind::Modify: stats_.modifyRoundTrip.add(us); break;
+            case ActionKind::Other:  stats_.otherRoundTrip.add(us);  break;
+        }
     }
     if (!result) {
         ++stats_.actionErrors;
