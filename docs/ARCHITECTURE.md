@@ -166,7 +166,7 @@ three sources (ack, `orderUpdates`, `userFills`) arrive in any order:
 | Failure | Handling |
 |---|---|
 | One unreachable address of a multi-address host (CDN edge) | `TlsStream` tries the next resolved address after a refusal or per-address timeout and rotates the starting address on every connect |
-| WS drop / server close | `WsSession` reconnects with exponential backoff (250 ms → 10 s, configurable), replays subscriptions; books cleared; `onDisconnected`/`onConnected` |
+| WS drop / server close | `WsSession` reconnects with exponential backoff (250 ms → 10 s, configurable), replays subscriptions; books cleared; `onDisconnected`/`onConnected`. Routine, not exceptional: testnet closes every socket after ~10–12 min (`code 1000: Expired`) whatever the heartbeat does ([ORDER_MANAGEMENT §11](ORDER_MANAGEMENT.md#11-disconnects-and-reconnects)) |
 | Half-open connection | application heartbeat `{"method":"ping"}` every 20 s; no inbound data for 60 s → forced reconnect |
 | Action sent over a WS that dies | pending posts fail with `Transport`, affected orders are reconciled |
 | No response to an action | per-request timer (`requestTimeoutMs`) → `Timeout` → reconcile |

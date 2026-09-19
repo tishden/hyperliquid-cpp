@@ -356,6 +356,18 @@ sequenceDiagram
     X-->>X: onReady()
 ```
 
+**The venue closes connections on its own, and a heartbeat does not prevent it.** On **testnet** every
+WebSocket is closed after roughly 10–12 minutes with `code 1000: Expired`, busy or idle, pinged or not
+(measured 2026-09-20 on three parallel sockets: 613 s, 662 s, 689 s, 691 s with `{"method":"ping"}` every
+20 s; **mainnet** kept the same three sockets open for the whole 25-minute measurement). What the ping
+does buy is the other failure: a socket that never pings is dropped by the venue without a close frame
+(code 1006) after 7–10 minutes. `WsSessionOptions::pingIntervalMs` is 20 s by default, well inside the
+venue's 60 s idle rule.
+
+So a long-running process reconnects every few minutes by design, and **every reconnect is a moment
+where an action in flight fails with `Transport` and its order must be reconciled** ([§10](#10-reconciliation)).
+That is the path to get right; suppressing the reconnect is not an option the venue offers.
+
 - Actions submitted while the socket is down go over HTTP (WebSocket transport) — order entry keeps working.
 - Stale connections (no inbound data for `staleTimeoutMs`) are closed and reconnected the same way.
 - Nothing is replayed: an action written to a dead connection is never re-sent (actions are not idempotent);

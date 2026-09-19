@@ -25,6 +25,10 @@ All notable changes to this project are documented here. The project follows
 ### Documentation
 - `docs/ORDER_MANAGEMENT.md` §10 states why reconciliation cannot use the cloid after an amendment,
   and that unaccounted open orders are adopted on reconnect.
+- §11 records what the venue actually does with connections, measured: testnet closes every WebSocket
+  after ~10–12 minutes (`code 1000: Expired`) whether it is busy or idle, pinged or not, while mainnet
+  held the same sockets for a full 25-minute measurement. A heartbeat does not avoid that close — it
+  avoids the other one, where an unpinged socket is dropped without a close frame (code 1006).
 
 ## [1.4.0] — 2026-09-19
 
