@@ -40,6 +40,7 @@ struct FakeHyperliquid {
     std::string userRoleResponse{R"({"role":"user"})"};
     std::string openOrdersResponse{"[]"};
     std::string rateLimitResponse{R"({"cumVlm":"0.0","nRequestsUsed":0,"nRequestsCap":10000})"};
+    bool serveSpot{false};
     std::string wsInfoResponse{R"({"status":"order"})"};
     std::function<std::string(const std::string& actionType, const std::string& request)> actionPayload;
     std::vector<std::string> posts;
@@ -86,6 +87,13 @@ struct FakeHyperliquid {
     std::string info(const std::string& body) {
         if (body.find(R"("type":"meta")") != std::string::npos) {
             return hltest::fixture("meta_testnet.json");
+        }
+        // "spotClearinghouseState" contains "clearinghouseState", so the spot routes come first.
+        if (serveSpot && body.find("spotClearinghouseState") != std::string::npos) {
+            return hltest::fixture("spot_clearinghouse_state.json");
+        }
+        if (serveSpot && body.find(R"("type":"spotMeta")") != std::string::npos) {
+            return hltest::fixture("spot_meta_testnet.json");
         }
         if (body.find("clearinghouseState") != std::string::npos) {
             return R"({"marginSummary":{"accountValue":"1000.5","totalNtlPos":"1500","totalRawUsd":"2500","totalMarginUsed":"75"},)"
@@ -203,8 +211,9 @@ protected:
     void SetUp() override { hl::setLogLevel(hl::LogLevel::Error); }
 
     std::unique_ptr<hl::ExchangeClient> makeClient(hl::ActionTransport transport = hl::ActionTransport::WebSocket,
-                                                   std::int64_t timeoutMs = 2000) {
+                                                   std::int64_t timeoutMs = 2000, bool loadSpot = false) {
         hl::ExchangeConfig cfg;
+        cfg.loadSpotAssets = loadSpot;
         cfg.network = hl::Network::Testnet;
         cfg.privateKey = kKey;
         cfg.transport = transport;
@@ -664,6 +673,30 @@ TEST_F(ExchangeClientTest, OrdersOpenOnTheVenueAreAdoptedBeforeOnReadyFires) {
     ASSERT_TRUE(runUntil(loop, [&] { return listener.ready > 0; }));
     EXPECT_EQ(liveAtReady, 1U) << "cancelAll() from onReady() must see orders the venue already has open";
     EXPECT_TRUE(readyFlagAtReady) << "isReady() must agree with the callback";
+}
+
+// Spot support end to end through the client: `spotMeta` gives the markets, `spotClearinghouseState`
+// the balances. The venue reports balances per token ("PURR") while positions are tracked per market
+// ("PURR/USDC"), and on a unified account the spendable USDC lives here rather than in
+// `clearinghouseState.accountValue`.
+TEST_F(ExchangeClientTest, LoadSpotAssetsSeedsMarketsAndTokenBalances) {
+    fake.serveSpot = true;
+    auto client = makeClient(hl::ActionTransport::WebSocket, 2000, /*loadSpot=*/true);
+    client->start();
+    ASSERT_TRUE(runUntil(loop, [&] { return listener.ready > 0; }));
+
+    const hl::AssetInfo* purr = client->assets().find("PURR/USDC");
+    ASSERT_NE(purr, nullptr) << "spot markets must be in the registry";
+    EXPECT_EQ(purr->kind, hl::AssetInfo::Kind::Spot);
+    EXPECT_EQ(purr->asset, 10000U) << "spot wire id is 10000 + index";
+    EXPECT_EQ(purr->baseToken, "PURR");
+
+    EXPECT_EQ(client->spotTokenBalance("USDC"), d("1234.5678")) << "collateral on a unified account";
+    EXPECT_EQ(client->spotTokenBalance("PURR"), d("500"));
+    EXPECT_TRUE(client->spotTokenBalance("NOSUCHTOKEN").isZero());
+    EXPECT_EQ(client->position("PURR/USDC"), d("500")) << "token balance seeds the market's position";
+    // Perp positions from clearinghouseState are unaffected by spot loading.
+    EXPECT_EQ(client->position("ETH"), d("-0.5"));
 }
 
 TEST_F(ExchangeClientTest, CancelsCarryTheFastFlagExceptForTriggerOrders) {

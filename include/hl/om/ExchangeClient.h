@@ -278,6 +278,15 @@ public:
     [[nodiscard]] std::vector<const Order*> liveOrders(std::string_view coin = {}) const;
     /// Signed position from `clearinghouseState` at start-up plus subsequent fills.
     [[nodiscard]] Decimal position(std::string_view coin) const noexcept;
+    /**
+     * @brief Spot balance of one token ("USDC", "HYPE"), or zero if it is unknown.
+     *
+     * Only populated when `ExchangeConfig::loadSpotAssets` is set. On a unified account — the
+     * venue's default — the USDC balance here is the collateral behind both spot and perp
+     * trading, while `AccountState::accountValue` counts only what is committed to perp
+     * positions. This is the figure to size against.
+     */
+    [[nodiscard]] Decimal spotTokenBalance(std::string_view token) const noexcept;
     [[nodiscard]] const AssetRegistry& assets() const noexcept { return assets_; }
     [[nodiscard]] const Address& accountAddress() const noexcept { return account_; }
     [[nodiscard]] const Address& signerAddress() const noexcept { return signer_->address(); }
@@ -391,6 +400,10 @@ private:
     void adoptOpenOrders();
     void resubscribeUser();
     void maybeReady();
+    /// Give each spot market the balance of its base token; needs spotMeta and the balances both in.
+    void seedSpotPositions();
+    /// One start-up line describing where the money is; see spotTokenBalance().
+    void logAccountSummary() const;
     Error checkReady() const;
     Result<OrderWire> buildWire(const OrderRequest& request, Cloid cloid) const;
     void send(const EncodedAction& action, PendingAction pending);
@@ -433,6 +446,8 @@ private:
         std::int64_t lastFillMs{0};  ///< venue time of the newest fill applied to this coin
     };
     std::unordered_map<std::string, PositionState> positions_;
+    std::unordered_map<std::string, Decimal> spotTokens_;  ///< token → balance (`loadSpotAssets`)
+    Decimal accountValue_{};                               ///< last `marginSummary.accountValue`
     std::unordered_set<std::uint64_t> seenTids_;
     std::deque<std::uint64_t> seenTidOrder_;
     std::unordered_map<std::uint64_t, PendingAction> pending_;

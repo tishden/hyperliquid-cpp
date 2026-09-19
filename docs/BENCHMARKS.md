@@ -143,12 +143,14 @@ The benchmarks above are local work. Measured against **mainnet** on 2026-09-19 
 non-co-located host, with the client's own `Stats::…RoundTrip` counters
 ([API.md §5](API.md#5-order-management)):
 
+Aggregated over runs on eleven instruments (perps and spot), 75 signed actions in total:
+
 | Action | n | mean | min | max |
 |---|---|---|---|---|
-| build + sign (local only) | 12 | **0.009 ms** | 0.007 | 0.019 |
-| order → venue response | 6 | 787 ms | 673 | 986 |
-| cancel → venue response | 3 | 705 ms | 695 | 711 |
-| modify → venue response | 1 | 689 ms | — | — |
+| build + sign (local only) | 75 | **0.008 ms** | 0.006 | 0.016 |
+| order → venue response | 28 | 779 ms | 677 | 994 |
+| cancel → venue response | 21 | 807 ms | 706 | 1135 |
+| modify → venue response | 7 | 795 ms | 715 | 886 |
 
 Roughly 0.001 % of the time an order takes is spent in this library; the rest is Hyperliquid producing
 a block and the network getting there. That is the honest reason the optimisation work stopped where it

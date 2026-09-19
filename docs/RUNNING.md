@@ -212,12 +212,18 @@ Three venue behaviours the run makes concrete, all of them surprises for someone
 
 ### Same run, other instruments
 
+Twelve instruments were run this way on mainnet, covering every perp `szDecimals` from 0 to 5, both
+product types and both transports — see the table in
+[ARCHITECTURE.md](ARCHITECTURE.md#verification-matrix). Every run ended flat with no orders left.
+The interesting ones:
+
 | Coin | What it exercises | Result |
 |---|---|---|
-| `@107` HYPE/USDC | spot, szDecimals 2, WebSocket transport, `--taker` with real fills, `expiresAfter` | 15/15 |
-| `@142` UBTC/USDC | spot, szDecimals 5, five-figure price | 13/13 |
-| `@151` UETH/USDC | spot, szDecimals 4, **`--transport http`** (10 of 10 actions over HTTP) | 13/13 |
 | `BTC` | **perps**: `updateLeverage`, reduce-only close, real taker fill (fee in USDC, so no dust) | 16/16 |
+| `XRP` | perps with `szDecimals 0` — sizes must be whole units, the rounding edge case | 14/14 |
+| `@107` HYPE/USDC | spot, WebSocket, `--taker` with real fills, `expiresAfter` | 15/15 |
+| `@151` UETH/USDC | spot, **`--transport http`** (10 of 10 actions over HTTP) | 13/13 |
+| `PURR/USDC` | the one spot pair the venue names by pair instead of `@index` | 13/13 |
 
 Perp coins take the same run and need no separate funding: on a unified account the spot USDC
 balance already collateralises them (see "Account modes" in [§6](#6-credentials)). Only in the older

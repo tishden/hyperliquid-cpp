@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The project follows
 ## [Unreleased]
 
 ### Added
+- `ExchangeClient::spotTokenBalance(token)` — the spot balance of one token, populated when
+  `loadSpotAssets` is set. On a unified account (the venue default) the USDC balance here is the
+  collateral behind both spot and perp trading, and is the figure to size against.
+- The start-up line now says where the money is instead of one ambiguous number:
+  `exchange: ready — perp collateral 0 USDC, 0 open position(s), spot USDC 28.41`, and without
+  `loadSpotAssets` it explains that a zero there is normal on a unified account.
 - **Order-path latency counters.** `ExchangeClient::Stats` gained `buildAndSign` and
   `orderRoundTrip` / `cancelRoundTrip` / `modifyRoundTrip` / `otherRoundTrip`, each a `LatencyStats`
   with count, mean, min, max and last in microseconds, measured on a steady clock. `hl_live_check`
@@ -34,6 +40,12 @@ All notable changes to this project are documented here. The project follows
   mainnet, including a restarted client seeding an open perp position.
 
 ### Fixed
+- **Spot balances were seeded only if `spotMeta` happened to arrive before
+  `spotClearinghouseState`.** The two are independent requests and the seeding loop needed the
+  markets from the first to place the balances from the second, so on the other ordering every spot
+  position silently started at zero. Whichever response lands second now does the seeding. Found by
+  the new `LoadSpotAssetsSeedsMarketsAndTokenBalances` test; mainnet happened to be ordered the
+  favourable way, which is exactly why it had not shown up.
 - **`onReady()` fired before orders already resting on the venue had been adopted.** The start-up
   `openOrders` listing is asynchronous, and readiness did not wait for it — measured at 3 s on
   mainnet. An application that cancels or reconciles on ready (`hl_live_check --flatten` does) saw an

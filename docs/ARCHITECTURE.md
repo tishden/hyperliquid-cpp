@@ -220,19 +220,34 @@ decimals; sizes have `szDecimals` decimals.
 
 | Build | Tests | Result |
 |---|---|---|
-| Clang 21, Release | 189 | all passed |
-| GCC 11.5 (system), Release | 189 | all passed |
-| GCC 15, Release | 189 | all passed |
-| Clang 21, AddressSanitizer + UBSan | 189 | all passed, no reports |
-| Clang 21, ThreadSanitizer (library tests; examples not built) | 183 | all passed, no reports |
-| Docker build stage (Ubuntu 24.04, GCC 13) | 189 | all passed |
+| Clang 21, Release | 190 | all passed |
+| GCC 11.5 (system), Release | 190 | all passed |
+| GCC 15, Release | 190 | all passed |
+| Clang 21, AddressSanitizer + UBSan | 190 | all passed, no reports |
+| Clang 21, ThreadSanitizer (library tests; examples not built) | 184 | all passed, no reports |
+| Docker build stage (Ubuntu 24.04, GCC 13) | 190 | all passed |
 
-| Live check against Hyperliquid mainnet (real money) | Result |
-|---|---|
-| `hl_live_check --coin BTC --notional 11 --taker --mainnet …` (**perps**) | **16/16 steps passed** — real taker fill, `updateLeverage`, reduce-only close, forced reconnect |
-| `hl_live_check --coin @107 --notional 11 --taker --expiry-ms 30000 --mainnet …` (HYPE/USDC) | **15/15 steps passed** — including two real taker fills and `expiresAfter` on every action |
-| `hl_live_check --coin @142 …` (UBTC/USDC, szDecimals 5) | **13/13 steps passed** |
-| `hl_live_check --coin @151 --transport http …` (UETH/USDC, all actions over HTTP) | **13/13 steps passed** |
+**Live check against Hyperliquid mainnet, real money, 2026-09-19.** Twelve instruments covering every
+perp `szDecimals` from 0 to 5, both product types, both transports; every run ended with the account
+flat and no orders left.
+
+| Instrument | Kind, szDecimals | What it adds | Result |
+|---|---|---|---|
+| `BTC` | perp, 5 | `--taker`: real fill, `updateLeverage`, reduce-only close | **16/16** |
+| `ETH` | perp, 4 | | **14/14** |
+| `XMR` | perp, 3 | | **14/14** |
+| `ZEC` | perp, 2 | four-figure price | **14/14** |
+| `NEAR` | perp, 1 | | **14/14** |
+| `XRP` | perp, 0 | whole-unit sizes — the rounding edge case | **14/14** |
+| `@107` HYPE/USDC | spot, 2 | `--taker` + `--expiry-ms`: two real fills, `expiresAfter` | **15/15** |
+| `@142` UBTC/USDC | spot, 5 | five-figure price | **13/13** |
+| `@151` UETH/USDC | spot, 4 | **`--transport http`**, all actions over HTTP | **13/13** |
+| `@156` USOL/USDC | spot, 3 | | **13/13** |
+| `PURR/USDC` | spot, 0 | the one spot pair named by pair rather than `@index` | **13/13** |
+
+Aggregate latency over those runs — 75 signed actions, measured by the client's own counters:
+build+sign **0.008 ms** mean (max 0.016), order round trip **779 ms** (677–994), cancel **807 ms**,
+modify **795 ms**.
 
 | Live check against Hyperliquid testnet | Result |
 |---|---|

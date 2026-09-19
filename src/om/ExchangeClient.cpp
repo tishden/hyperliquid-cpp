@@ -172,6 +172,7 @@ void ExchangeClient::bootstrap() {
         assets_ = r.value();
         assetsLoaded_ = true;
         logf(LogLevel::Info, "exchange: %zu assets loaded", assets_.all().size());
+        seedSpotPositions();  // balances may already have arrived
         maybeReady();
     });
     // The venue attributes an agent wallet's actions to its master account: order updates, fills and
@@ -217,21 +218,12 @@ void ExchangeClient::bootstrap() {
                 logf(LogLevel::Warn, "exchange: spotClearinghouseState failed (%s); spot positions start empty",
                      r.error().message.c_str());
             } else {
-                // Spot positions are tracked per market ("PURR/USDC"); the venue reports balances per
-                // token ("PURR"), so map each pair to the balance of its base token.
-                for (const auto& asset : assets_.all()) {
-                    if (asset.kind != AssetInfo::Kind::Spot || asset.baseToken.empty()) {
-                        continue;
-                    }
-                    for (const auto& balance : r.value()) {
-                        if (balance.coin == asset.baseToken) {
-                            positions_.try_emplace(asset.name, PositionState{balance.total, 0});
-                            break;
-                        }
-                    }
+                for (const auto& balance : r.value()) {
+                    spotTokens_[balance.coin] = balance.total;
                 }
             }
             spotBalancesLoaded_ = true;
+            seedSpotPositions();
             maybeReady();
         });
     }
@@ -246,8 +238,7 @@ void ExchangeClient::bootstrap() {
             for (const auto& p : r.value().positions) {
                 positions_.try_emplace(p.coin, PositionState{p.szi, 0});
             }
-            logf(LogLevel::Info, "exchange: account value %s USDC, %zu open positions",
-                 r.value().accountValue.toString().c_str(), r.value().positions.size());
+            accountValue_ = r.value().accountValue;
         }
         positionsLoaded_ = true;
         maybeReady();
@@ -328,12 +319,53 @@ void ExchangeClient::resubscribeUser() {
             for (const auto& p : r.value().positions) {
                 positions_.try_emplace(p.coin, PositionState{p.szi, 0});
             }
-            logf(LogLevel::Info, "exchange: account value %s USDC, %zu open positions",
-                 r.value().accountValue.toString().c_str(), r.value().positions.size());
+            accountValue_ = r.value().accountValue;
         }
         positionsLoaded_ = true;
         maybeReady();
     });
+}
+
+void ExchangeClient::seedSpotPositions() {
+    // Needs both halves: `spotMeta` for the markets and `spotClearinghouseState` for the balances.
+    // They are two independent requests, so whichever lands second does the seeding.
+    if (!spotBalancesLoaded_ || !assetsLoaded_) {
+        return;
+    }
+    // Positions are tracked per market ("PURR/USDC"); the venue reports balances per token
+    // ("PURR"), so give each pair the balance of its base token.
+    for (const auto& asset : assets_.all()) {
+        if (asset.kind != AssetInfo::Kind::Spot || asset.baseToken.empty()) {
+            continue;
+        }
+        const auto it = spotTokens_.find(asset.baseToken);
+        if (it != spotTokens_.end()) {
+            positions_.try_emplace(asset.name, PositionState{it->second, 0});
+        }
+    }
+}
+
+Decimal ExchangeClient::spotTokenBalance(std::string_view token) const noexcept {
+    const auto it = spotTokens_.find(std::string{token});
+    return it == spotTokens_.end() ? Decimal{} : it->second;
+}
+
+void ExchangeClient::logAccountSummary() const {
+    std::size_t open = 0;
+    for (const auto& [coin, state] : positions_) {
+        open += state.size.isZero() ? 0 : 1;
+    }
+    std::string line = "perp collateral " + accountValue_.toString() + " USDC, " + std::to_string(open) +
+                       " open position(s)";
+    if (config_.loadSpotAssets) {
+        line += ", spot USDC " + spotTokenBalance("USDC").toString();
+    } else if (accountValue_.isZero()) {
+        // The venue's default is a unified account, where the balance lives in the spot
+        // clearinghouse and this figure counts only collateral committed to perps.
+        line += " — zero is normal on a unified account, where the balance sits in spot; "
+                "set ExchangeConfig::loadSpotAssets to see it";
+    }
+    logf(LogLevel::Info, "exchange: ready — %s", line.c_str());
 }
 
 void ExchangeClient::maybeReady() {
@@ -356,7 +388,7 @@ void ExchangeClient::maybeReady() {
         reconcileAll();
     }
     wasReadyBefore_ = true;
-    logf(LogLevel::Info, "exchange: ready");
+    logAccountSummary();
     listener_.onReady();
 }
 
