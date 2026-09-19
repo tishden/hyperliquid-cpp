@@ -92,7 +92,7 @@ socket ─► TlsStream::doRead ─► WsFrameDecoder (zero-copy for unfragmente
 **Why snapshot + overlay.** Hyperliquid publishes no incremental depth: `l2Book` is a full snapshot
 (top 20, or top 5 on a `fast` subscription) and `bbo` fires on every best-price change in between.
 The snapshot feeds are slow relative to `bbo` — measured on mainnet on 2026-09-19: 20-level every
-~5.3 s, `fast` every ~0.54 s, `bbo` ~7 messages per second. `OrderBook` keeps the last
+~5.35 s, `fast` every ~0.54 s, `bbo` every 150–180 ms. `OrderBook` keeps the last
 snapshot and rewrites its top from `bbo`: levels that the new best price moved through are removed,
 the best level is inserted or resized, and stale opposite-side levels that would now cross are
 dropped. The result is a consistent, never-crossed book whose top is as fresh as the venue allows and
@@ -181,7 +181,7 @@ three sources (ack, `orderUpdates`, `userFills`) arrive in any order:
 ## 8. Numeric model
 
 `hl::Decimal` is an int64 mantissa with 8 implied decimals (±92 billion), matching the maximum precision
-Hyperliquid accepts. Venue strings are parsed exactly (≈18 ns, 5× faster than `strtod`), and the wire
+Hyperliquid accepts. Venue strings are parsed exactly (≈8 ns, 3.5× faster than `strtod`), and the wire
 form is produced exactly the way the reference SDK normalises numbers (`"50000"`, `"0.001"`), which
 matters because the msgpack bytes that are signed contain these strings. Products and quotients use
 128-bit intermediates. Doubles appear only in convenience accessors (`toDouble`, `spreadBps`) and in the
@@ -245,16 +245,16 @@ left.
 | `@156` USOL/USDC | spot, 3 | | **13/13** |
 | `PURR/USDC` | spot, 0 | the one spot pair named by pair rather than `@index` | **13/13** |
 
-Aggregate latency over those runs — 75 signed actions, measured by the client's own counters:
-build+sign **0.008 ms** mean (max 0.016), order round trip **779 ms** (677–994), cancel **807 ms**,
-modify **795 ms**.
+Aggregate latency over those runs — 120 signed actions, measured by the client's own counters from
+the benchmark stand in Tokyo ([BENCHMARKS.md](BENCHMARKS.md#environment)): build+sign **0.001 ms**
+mean (max 0.009), order round trip **435 ms** (311–763), cancel **402 ms**, modify **414 ms**.
 
 | Live check against Hyperliquid testnet | Result |
 |---|---|
-| `hl_live_check --taker --expiry-ms 30000` (WebSocket transport, `expiresAfter` on every action) | **17/17 steps passed** — resting order, `orderStatus`/`frontendOpenOrders`, modify with oid change, cancel, batch + cancelAll, post-only rejection, local validation, IOC fill with fee and position, reduce-only close, `scheduleCancel` (venue requires $1 M volume), `updateLeverage`, forced reconnect + reconciliation, clean exit |
-| `hl_live_check --taker --transport http` | **17/17 steps passed**, 13/13 actions over `POST /exchange` |
-| Quoter, 70 s quoting at the touch | 2 maker fills (0.0045 ETH each, fee 0.001781 USDC = 1.5 bps), inventory skew applied, orders canceled on exit |
-| Quoter, 5 min at 1.5 bps from mid | 21 amendments, 0 rejects, 0 errors, no fills (quotes behind the touch) |
+| `hl_live_check --taker --expiry-ms 30000` (WebSocket transport, `expiresAfter` on every action) | **16/16 steps passed** — resting order, `orderStatus`/`frontendOpenOrders`, modify with oid change, cancel, batch + cancelAll, post-only rejection, local validation, IOC fill with fee and position, reduce-only close, `scheduleCancel` (venue requires $1 M volume), `updateLeverage`, forced reconnect + reconciliation, clean exit |
+| `hl_live_check --taker --transport http` | **16/16 steps passed**, 13/13 actions over `POST /exchange` |
+| Quoter, 70 s quoting at the touch | 4 maker fills (0.0075 ETH each, fee 0.002962 USDC = 1.5 bps), inventory skew applied, orders canceled on exit |
+| Quoter, 10 min at 8 bps from mid | 32 amendments against 2 placements, 0 rejects, 0 errors, no fills (quotes behind the touch) |
 | Fast cancels (`f: true`) | accepted by the venue on single and batch cancels |
 | Order priority fee (`grouping:{"p":10000}`) | encoding accepted; rejected semantically ("Insufficient delegatable balance for priority order"), which is the expected answer for an account without staking balance |
 | Market data (`l2Book`, `bbo`, `trades`, `activeAssetCtx`) | books built, 0 parse errors |

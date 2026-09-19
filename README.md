@@ -17,28 +17,28 @@ order management and EIP-712 signing — in one dependency-light static library.
 | **Order book** | allocation-free, 64 levels/side · snapshot + best-bid/offer overlay · mid, microprice, spread, depth, VWAP |
 | **Order management** | place / batch / cancel / cancel-all / modify (incl. stops) / scheduleCancel / updateLeverage / updateIsolatedMargin · TP-SL grouping, builder codes, `expiresAfter`, fast cancels, order-priority fees · WebSocket `post` **or** HTTP · unified order state from acks + `orderUpdates` + `userFills` · positions (perp **and** spot) · automatic reconciliation · adopts orders left by a previous process · agent-wallet/master detection |
 | **Account & risk** | liquidations and venue-initiated cancels (`userEvents`) · funding payments · request-budget tracking with 429 / `Retry-After` handling · account state, open orders, order status, fills by time, historical orders, funding history, predicted fundings, candles, spot balances, rate limits |
-| **Signing** | byte-identical to the official Python SDK (golden-vector tested) · optional precomputed-nonce ECDSA: 0.17 µs per signature · agent (API) wallets · vaults / sub-accounts · `expiresAfter` |
+| **Signing** | byte-identical to the official Python SDK (golden-vector tested) · optional precomputed-nonce ECDSA: 44 ns per signature · agent (API) wallets · vaults / sub-accounts · `expiresAfter` |
 | **Venue rules** | asset ids resolved from `meta`/`spotMeta` · exact price (5 significant figures) and size rounding |
-| **Engineering** | exact fixed-point decimals (no floating point on the wire path) · single-threaded epoll reactor, re-entrancy-safe callbacks · 190 tests incl. end-to-end against a mock venue and a 17-step live acceptance run · ASan/UBSan/TSan clean · GCC 11/15, Clang 21 · `-Werror` |
+| **Engineering** | exact fixed-point decimals (no floating point on the wire path) · single-threaded epoll reactor, re-entrancy-safe callbacks · 190 tests incl. end-to-end against a mock venue and a 16-step live acceptance run · ASan/UBSan/TSan clean · GCC 11/15, Clang 21 · `-Werror` |
 | **Not a general SDK** | a stateful trading client — order table, book, positions, reconciliation — not a thin endpoint wrapper. A free MIT SDK with wider endpoint coverage exists; the side-by-side, including where it wins, is in [docs/COMPARISON.md](docs/COMPARISON.md) |
 | **Not included, by design** | the library cannot move funds: withdrawals, transfers and staking need EIP-712 user-signed actions it does not implement, so a compromised strategy process cannot drain the account ([docs/COVERAGE.md](docs/COVERAGE.md)) |
 
 ## Performance
 
-Measured on a 2012 Intel i7-3820, single core, Clang 21 `-O3` (current server cores are ~2× faster) — full table and methodology in
-[docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+Measured on an AWS `c8a.2xlarge` (AMD EPYC Zen 5, not bare metal), one isolated core, Clang 21 `-O3` —
+environment, full table and methodology in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 | Operation | Latency |
 |---|---|
-| Parse `bbo` frame → `BboMsg` | **336 ns** |
-| Parse `l2Book` (20×20 levels, 1.6 KB) | 4.0 µs |
-| Apply snapshot to `OrderBook` | 52 ns |
-| Replay of a real mainnet session | **514 MB/s · 1.64 M msg/s** |
-| Exact decimal parse (vs `strtod` 101 ns) | **19 ns** |
-| Order → signed WebSocket frame (msgpack, Keccak, EIP-712, ECDSA) | 42 µs → **3.3 µs** with precomputed nonces |
+| Parse `bbo` frame → `BboMsg` | **169 ns** |
+| Parse `l2Book` (20×20 levels, 1.6 KB) | 2.5 µs |
+| Apply snapshot to `OrderBook` | 12 ns |
+| Replay of a real mainnet session | **1.16 GiB/s · 3.8 M msg/s** |
+| Exact decimal parse (vs `strtod` 27 ns) | **7.8 ns** |
+| Order → signed WebSocket frame (msgpack, Keccak, EIP-712, ECDSA) | 15.9 µs → **1.17 µs** with precomputed nonces |
 
 Verified: 190 tests on Clang 21 / GCC 11 / GCC 15, ASan+UBSan and ThreadSanitizer clean, plus scripted
-live acceptance runs — **17/17 steps on testnet perps** and **perps and spot on mainnet with real
+live acceptance runs — **16/16 steps on testnet perps** and **perps and spot on mainnet with real
 money**, covering every size precision the venue uses, over both WebSocket and HTTP: resting orders,
 amendments, cancels, batches, post-only rejection, real taker fills with fees, `expiresAfter` and a
 forced reconnect with reconciliation. See
@@ -65,7 +65,7 @@ build/release/examples/hl_testnet_quoter --dry-run --coin ETH
 ### Docker
 
 ```bash
-docker build -t hyperliquid-cpp .                  # compiles, runs all 190 tests, produces a ~138 MB runtime image
+docker build -t hyperliquid-cpp .                  # compiles, runs all 190 tests, produces a ~142 MB runtime image
 docker run --rm hyperliquid-cpp hl_book_printer BTC ETH
 docker run --rm hyperliquid-cpp hl_testnet_quoter --dry-run --coin ETH
 docker run --rm -e HL_PRIVATE_KEY -e HL_ACCOUNT_ADDRESS hyperliquid-cpp hl_testnet_quoter --coin ETH --duration 600
@@ -186,34 +186,34 @@ build/release/examples/hl_testnet_quoter --key-file secrets/testnet.env \
 Real output from that command (trimmed):
 
 ```text
-hyperliquid-cpp 1.3.0 — ETH quoter on testnet (live orders)
-[ex] ready: account 0x…, signer 0x…, ETH asset=1 szDecimals=4, position 0
-[status] ETH mid=2645.4 spread=1.51bps bid=2643.9(Open) ask=2648.3(Open) pos=0 fills=0 vol=$0 pnl≈$0 order_rt=801/801ms(mean/last) sign=0.01ms
-[status] ETH mid=2644.8 spread=1.51bps bid=2643.1(Open) ask=2647.5(Open) pos=0 fills=0 vol=$0 pnl≈$0 order_rt=801/801ms(mean/last) sign=0.01ms
-[status] ETH mid=2646.25 spread=1.13bps bid=2643.8(Open) ask=2648.1(Open) pos=0 fills=0 vol=$0 pnl≈$0 order_rt=801/801ms(mean/last) sign=0.01ms
-^C
+hyperliquid-cpp 1.4.0 — ETH quoter on testnet (live orders)
+[ex] ready: account 0x…, signer 0x…, ETH asset=4 szDecimals=4, position 0
+[status] ETH mid=2638.05 spread=1.14bps bid=2635.9(Open) ask=2640.2(Open) pos=0 fills=0 vol=$0 pnl≈$0 order_rt=383/383ms(mean/last) sign=0.00ms
+[status] ETH mid=2638.45 spread=0.38bps bid=2635.9(Open) ask=2640.2(Open) pos=0 fills=0 vol=$0 pnl≈$0 order_rt=383/383ms(mean/last) sign=0.00ms
+[status] ETH mid=2636.45 spread=1.14bps bid=2634.2(Open) ask=2638.5(Open) pos=0 fills=0 vol=$0 pnl≈$0 order_rt=383/383ms(mean/last) sign=0.00ms
+…
 stopping…
 [shutdown] canceling 2 live order(s)…
 
 ══ summary ══════════════════════════════════════════════
   coin            ETH
-  orders placed   2   amendments 10   rejects 0
+  orders placed   2   amendments 32   rejects 0
   fills           0 (maker 0)   volume $0
   position        0 → 0
   pnl (mark@mid)  $0
-  actions         13 sent, 0 via HTTP, 0 errors, 0 timeouts, 0 reconciles
-  signatures      13 precomputed-nonce, 0 deterministic
-  build+sign      n=13   mean   0.008 ms   min   0.003   max   0.016
-  order rt        n=2    mean 801.017 ms   min 800.995   max 801.040
-  cancel rt       n=1    mean 809.695 ms   min 809.695   max 809.695
-  modify rt       n=10   mean 840.116 ms   min 752.675   max 1255.894
-  md messages     63 (parse errors 0, reconnects 0)
+  actions         35 sent, 0 via HTTP, 0 errors, 0 timeouts, 0 reconciles
+  signatures      35 precomputed-nonce, 0 deterministic
+  build+sign      n=35   mean   0.001 ms   min   0.001   max   0.006
+  order rt        n=2    mean 383.426 ms   min 383.425   max 383.427
+  cancel rt       n=1    mean 439.320 ms   min 439.320   max 439.320
+  modify rt       n=32   mean 439.005 ms   min 378.833   max 546.214
+  md messages     377 (parse errors 0, reconnects 0)
 ═════════════════════════════════════════════════════════
 ```
 
-Two things in that output are the point of this library. **`build+sign 0.008 ms`** is everything it
-does per action — encode, keccak, EIP-712, ECDSA, frame. **`order rt 801 ms`** is the venue: block
-production plus the network. And **`amendments 10` against `orders placed 2`** is the quoting model
+Two things in that output are the point of this library. **`build+sign 0.001 ms`** is everything it
+does per action — encode, keccak, EIP-712, ECDSA, frame. **`order rt 383 ms`** is the venue: block
+production plus the network. And **`amendments 32` against `orders placed 2`** is the quoting model
 working — quotes are moved with `modify` in place, keeping the order id and its queue position
 instead of cancelling and re-placing.
 

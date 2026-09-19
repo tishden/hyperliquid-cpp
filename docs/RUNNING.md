@@ -52,8 +52,8 @@ cmake --preset release && cmake --build --preset release && ctest --preset relea
 | `HL_NATIVE` | OFF | `-march=native` for the library, tests, examples — faster Keccak on modern CPUs, binaries not portable |
 | `CMAKE_BUILD_TYPE` | Release | |
 
-Choose the compiler with `CXX=clang++ CC=clang` (or `CXX=g++`) on the first configure. Clang produced ~15 %
-faster Keccak than GCC on the reference machine.
+Choose the compiler with `CXX=clang++ CC=clang` (or `CXX=g++`) on the first configure. Clang 21 produced
+~20 % faster Keccak than GCC 13 on the benchmark stand.
 
 ## 3. Running the examples
 
@@ -104,77 +104,84 @@ Spot pairs are named `@<index>` (`PURR/USDC` is the exception, index 0); passing
 
 ### What a real mainnet run looks like
 
-Below is an unedited run against mainnet spot HYPE/USDC on 2026-09-19 from an ordinary, non-co-located
-host, with a $30 account. Only the two addresses are redacted.
+Below is an unedited run against mainnet spot HYPE/USDC on 2026-09-19 from the benchmark stand in
+Tokyo ([BENCHMARKS.md](BENCHMARKS.md#environment)), with a $28 account. Only the two addresses are
+redacted.
 
 ```text
-hyperliquid-cpp 1.3.0 — live acceptance check on MAINNET (@107, WebSocket transport, presign 64, expiresAfter)
+hyperliquid-cpp 1.4.0 — live acceptance check on MAINNET (@107, WebSocket transport, presign 64, expiresAfter)
+[hl][INFO] ws: connecting to wss://api.hyperliquid.xyz/ws
 [hl][INFO] exchange: starting (mainnet, account 0x<master>, signer 0x<agent>)
+[hl][INFO] ws: connecting to wss://api.hyperliquid.xyz/ws
 
 ▶ connect, load metadata, subscribe user streams
-[hl][INFO] exchange: account value 0 USDC, 0 open positions
+[hl][INFO] ws: connected to wss://api.hyperliquid.xyz/ws (3 subscriptions)
+[hl][INFO] ws: connected to wss://api.hyperliquid.xyz/ws (2 subscriptions)
 [hl][INFO] exchange: 563 assets loaded
-[hl][INFO] exchange: ready
+[hl][INFO] exchange: ready — perp collateral 0 USDC, 4 open position(s), spot USDC 28.41048597
    PASS — account 0x<master>, 563 assets, @107 asset=10107 szDecimals=2
 
 ▶ market data: order book
-   PASS — bid 93.116 / ask 93.117, spread 0.11 bps, size to use 0.12
+   PASS — bid 91.669 / ask 91.673, spread 0.44 bps, size to use 0.12
 
 ▶ place post-only order far from mid → Open with oid
-   PASS — px 91.254, state Open, oid 549961856293
-   ⏱  order ×1 706.9 ms | build+sign ×1 0.016 ms | step 707 ms
+   PASS — px 89.837, state Open, oid 550121871020
+   ⏱  order ×1 394.7 ms | build+sign ×1 0.007 ms | step 395 ms
 
 ▶ info: orderStatus and frontendOpenOrders see the order
-   PASS — orderStatus: status open, oid 549961856293 | frontendOpenOrders: listed: oid 549961856293 px 91.254 sz 0.12 tif Alo
+   PASS — orderStatus: status open, oid 550121871020 | frontendOpenOrders: listed: oid 550121871020 px 89.837 sz 0.12 tif Alo
 
 ▶ modify price and size in place (cloid preserved)
-   PASS — px 90.323, sz 0.24, oid 549961856293 → 549961870250, state Open
-   ⏱  modify ×1 688.7 ms | build+sign ×1 0.008 ms | step 689 ms
+   PASS — px 88.919, sz 0.24, oid 550121871020 → 550121876162, state Open
+   ⏱  modify ×1 382.0 ms | build+sign ×1 0.001 ms | step 382 ms
 
 ▶ cancel by cloid → Canceled
    PASS — state Canceled
-   ⏱  cancel ×1 708.9 ms | build+sign ×1 0.008 ms | step 709 ms
+   ⏱  cancel ×1 409.9 ms | build+sign ×1 0.001 ms | step 410 ms
 
 ▶ batch of 2 orders in one action, then cancelAll
    PASS — states Open Open → cancelAll cleared all
-   ⏱  order ×1 722.1 ms, cancel ×1 711.2 ms | build+sign ×2 0.009 ms | step 1433 ms
+   ⏱  order ×1 412.8 ms, cancel ×1 385.1 ms | build+sign ×2 0.001 ms | step 798 ms
 
 ▶ post-only order that crosses → rejected by the venue
-   PASS — Rejected: Post only order would have immediately matched, bbo was 93.116@93.124. asset=10107
-   ⏱  order ×1 672.6 ms | build+sign ×1 0.007 ms | step 673 ms
+   PASS — Rejected: Post only order would have immediately matched, bbo was 91.672@91.673. asset=10107
+   ⏱  order ×1 429.2 ms | build+sign ×1 0.001 ms | step 429 ms
 
 ▶ local validation rejects invalid price/size/coin before signing
    PASS — unknown coin 'NOSUCHCOIN' | invalid price 1234.56789 for @107 (nearest valid 1234.6) | price and size must be positive
 
 ▶ IOC order that crosses → fill, position and fees
-      · fill Buy 0.12 @ 93.125 (taker, fee 0.000084)
-   PASS — Filled, filled 0.12 @ 93.125, position 0.12991601, fills 1, fee 0.000084 HYPE
-   ⏱  order ×1 944.2 ms | build+sign ×1 0.007 ms | step 1236 ms
+      · fill Buy 0.12 @ 91.673 (taker, fee 0.00008399)
+   PASS — Filled, filled 0.12 @ 91.673, position 0.12983201, fills 1, fee 0.00008399 HYPE
+   ⏱  order ×1 763.3 ms | build+sign ×1 0.001 ms | step 809 ms
 
 ▶ sell the acquired spot balance back with an IOC
-      · fill Sell 0.12 @ 93.124 (taker, fee 0.00782241)
-   PASS — Filled, position now 0.00983201 (below one lot — unsellable dust, the spot buy fee was charged in the base token)
-   ⏱  order ×1 985.7 ms | build+sign ×1 0.007 ms | step 1057 ms
+      · fill Sell 0.12 @ 91.663 (taker, fee 0.00769969)
+   PASS — Filled, position now 0.00974802 (below one lot — unsellable dust, the spot buy fee was charged in the base token)
+   ⏱  order ×1 612.0 ms | build+sign ×1 0.001 ms | step 854 ms
 
 ▶ scheduleCancel (dead-man's switch): arm and clear
-[hl][WARN] exchange: action failed (Venue): Cannot set scheduled cancel time until enough volume traded. Required: $1000000. Traded: $43.73.
-   PASS — arm: … | clear: …
-   ⏱  other ×2 1010.0 ms | build+sign ×2 0.013 ms | step 2020 ms
+[hl][WARN] exchange: action failed (Venue): Cannot set scheduled cancel time until enough volume traded. Required: $1000000. Traded: $687.73.
+[hl][WARN] exchange: action failed (Venue): Cannot set scheduled cancel time until enough volume traded. Required: $1000000. Traded: $687.73.
+   PASS — arm: Cannot set scheduled cancel time until enough volume traded. Required: $1000000. Traded: $687.73. | clear: Cannot set scheduled cancel time until enough volume traded. Required: $1000000. Traded: $687.73.
+   ⏱  other ×2 749.8 ms | build+sign ×2 0.001 ms | step 1500 ms
 
 ▶ updateLeverage
    SKIP — leverage is a perp-only action; @107 is a spot pair
 
 ▶ reconnect: drop the private socket, reconcile a live order
 [hl][WARN] ws: wss://api.hyperliquid.xyz/ws closed: live-check forced reconnect
-[hl][INFO] exchange: ready
+[hl][INFO] ws: connecting to wss://api.hyperliquid.xyz/ws
+[hl][INFO] ws: connected to wss://api.hyperliquid.xyz/ws (3 subscriptions)
+[hl][INFO] exchange: ready — perp collateral 0 USDC, 4 open position(s), spot USDC 28.41048597
    PASS — reconnected, reconciles 0 → 1, order Open
-   ⏱  order ×1 694.2 ms, cancel ×1 694.7 ms | build+sign ×2 0.008 ms | step 2783 ms
+   ⏱  order ×1 344.6 ms, cancel ×1 373.4 ms | build+sign ×2 0.002 ms | step 1024 ms
 
 ▶ no orders left on the venue
    PASS — 0 open orders on the venue
 
 ▶ no leftover position (a resting test order may have been filled)
-   PASS — only 0.00983201 left — below one lot, cannot be sold
+   PASS — only 0.00974802 left — below one lot, cannot be sold
 
 ══ live check summary ═══════════════════════════════════
   … 15 steps, all PASS …
@@ -182,27 +189,29 @@ hyperliquid-cpp 1.3.0 — live acceptance check on MAINNET (@107, WebSocket tran
   actions 12 (0 via HTTP), errors 2, timeouts 0, reconciles 1
   signatures 12 precomputed-nonce / 0 deterministic
   --- latency (round trip includes the network to the venue) ---
-  build+sign   n=12   mean    0.009 ms   min    0.007   max    0.019   last    0.009
-  order        n=6    mean  787.619 ms   min  672.600   max  985.703   last  694.201
-  cancel       n=3    mean  704.963 ms   min  694.739   max  711.225   last  694.739
-  modify       n=1    mean  688.715 ms   min  688.715   max  688.715   last  688.715
-  other        n=2    mean 1010.007 ms   min 1002.368   max 1017.647   last 1002.368
-  order updates 28, fills 2, md messages 66 (parse errors 0)
+  build+sign   n=12   mean    0.001 ms   min    0.001   max    0.007   last    0.002
+  order        n=6    mean  492.763 ms   min  344.616   max  763.340   last  344.616
+  cancel       n=3    mean  389.446 ms   min  373.372   max  409.857   last  373.372
+  modify       n=1    mean  382.010 ms   min  382.010   max  382.010   last  382.010
+  other        n=2    mean  749.837 ms   min  737.670   max  762.005   last  737.670
+  order updates 28, fills 2, md messages 35 (parse errors 0)
   0 of 15 steps failed
 ═════════════════════════════════════════════════════════
 ```
 
 **Read the latency block, not the marketing.** `build+sign` is everything this library does for an
-action — encode, keccak, EIP-712, ECDSA, frame — and it is **9 µs**. The round trip is **700–1000 ms**,
-because that is the venue: block production plus the network. The library is four orders of magnitude
-away from being the bottleneck, which is exactly why the signing work went into the precomputed-nonce
-path and no further. Budget your own strategy against ~0.8 s to know an order rested, not against µs.
+action — encode, keccak, EIP-712, ECDSA, frame — and it is **1 µs** (7 µs for the first one, which
+warms the caches). The round trip is **345–763 ms**, because that is the venue: block production plus
+the network, of which only 2.4 ms is the network from this host. The library is five orders of
+magnitude away from being the bottleneck, which is exactly why the signing work went into the
+precomputed-nonce path and no further. Budget your own strategy against ~0.4 s to know an order
+rested, not against µs.
 
 Three venue behaviours the run makes concrete, all of them surprises for someone arriving from a CEX:
 
 - **The spot taker fee on a buy is charged in the base token.** Buy 0.12 HYPE and 0.11991601 arrives.
   Selling "everything back" therefore always leaves a remainder, and when that remainder is smaller
-  than one lot it cannot be sold at all. Above it is 0.0098 HYPE, worth about \$0.92, permanently stuck.
+  than one lot it cannot be sold at all. Above it is 0.0097 HYPE, worth about \$0.89, permanently stuck.
   Size spot round trips with this in mind.
 - **`scheduleCancel` needs \$1 M of traded volume.** The dead-man's switch is not available to a new
   account; the run treats the refusal as a pass because the action, signature and error path are what
@@ -242,7 +251,7 @@ The `Dockerfile` has three stages:
 | `runtime` (default) | Ubuntu 24.04 + `libssl3`, CA certificates, the four binaries and test fixtures; runs as unprivileged user `trader` | running |
 
 ```bash
-docker build -t hyperliquid-cpp .                                   # runtime image (~133 MB)
+docker build -t hyperliquid-cpp .                                   # runtime image (~142 MB)
 docker build --build-arg RUN_TESTS=OFF -t hyperliquid-cpp .         # skip tests during the build
 docker build --target dev -t hyperliquid-cpp:dev .
 
@@ -343,7 +352,7 @@ ex.network            = hl::Network::Testnet;
 ex.privateKey         = std::getenv("HL_PRIVATE_KEY");
 ex.accountAddress     = std::getenv("HL_ACCOUNT_ADDRESS");
 ex.transport          = hl::ActionTransport::WebSocket;   // HTTP fallback is automatic
-ex.precomputedNonces  = 512;                              // ~3 µs instead of ~42 µs per signed action
+ex.precomputedNonces  = 512;                              // ~1.2 µs instead of ~16 µs per signed action
 ex.requestTimeoutMs   = 5'000;
 hl::ExchangeClient exchange(loop, strategy, ex);
 
@@ -375,9 +384,18 @@ position and reaction time consistent:
 
 1. **Location.** Hyperliquid's API is served through CloudFront; measure RTT from candidate regions
    (`curl -w '%{time_connect} %{time_starttransfer}\n' -o /dev/null -X POST https://api.hyperliquid.xyz/info -d '{"type":"meta"}' -H 'Content-Type: application/json'`)
-   and deploy where it is lowest (typically Tokyo).
+   and deploy where it is lowest (typically Tokyo: 2.4 ms of TCP round trip from `ap-northeast-1`,
+   against ~150 ms from Europe).
 2. **Dedicated core for the loop.** Isolate a core (`isolcpus=` / `nohz_full=` or cgroup cpusets) and run the
-   event loop there, busy-polling:
+   event loop there, busy-polling. The benchmark stand
+   ([BENCHMARKS.md](BENCHMARKS.md#environment)) boots with
+
+   ```text
+   isolcpus=managed_irq,domain,4-7 nohz_full=4-7 rcu_nocbs=4-7 rcu_nocb_poll irqaffinity=0-1 idle=poll
+   ```
+
+   and, on top of that, `irqbalance` disabled (so NIC interrupts stay on the housekeeping cores) and
+   interrupt coalescing off on the NIC (`ethtool -C <if> adaptive-rx off rx-usecs 0 tx-usecs 0`):
    ```cpp
    std::thread io([&] {
        cpu_set_t set; CPU_ZERO(&set); CPU_SET(3, &set);

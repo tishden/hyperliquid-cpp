@@ -39,11 +39,12 @@ struct L2BookOptions {
      * Channel, frame shape and parsing are identical to a normal `l2Book`, so `book(coin)` is
      * maintained exactly as before, just five levels deep. Despite the name this is a **rate**
      * difference, not a latency one: measured on mainnet BTC and ETH on 2026-09-19, snapshots
-     * arrive about every 0.54 s against about 5.3 s for the 20-level feed, while matching
-     * snapshots of the two feeds by venue timestamp showed no consistent delivery lead either
-     * way. Take it to keep levels 2..5 fresh; keep the default subscription when
-     * `cumulativeSize` / `vwapForSize` need levels 6..20, and remember `bbo` (~7 messages per
-     * second) is still the fastest source for the top of book.
+     * arrive about every 0.54 s against about 5.35 s for the 20-level feed, while matching
+     * snapshots of the two feeds by venue timestamp showed the `fast` copy ahead by a median of
+     * 13-19 ms but with a spread of -70..+58 ms — no dependable lead. Take it to keep levels
+     * 2..5 fresh; keep the default subscription when `cumulativeSize` / `vwapForSize` need
+     * levels 6..20, and remember `bbo` (every 150-180 ms) is still the fastest source for the
+     * top of book.
      *
      * Omitted from the subscription JSON when false, so existing subscription strings are
      * unchanged byte for byte.

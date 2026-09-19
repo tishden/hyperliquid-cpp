@@ -32,7 +32,7 @@ All notable changes to this project are documented here. The project follows
   `orderRoundTrip` / `cancelRoundTrip` / `modifyRoundTrip` / `otherRoundTrip`, each a `LatencyStats`
   with count, mean, min, max and last in microseconds, measured on a steady clock. `hl_live_check`
   prints them per step and in its summary, `hl_testnet_quoter` in its status line and summary.
-  Measured live on mainnet: build+sign 9 µs against a 673–1076 ms venue round trip.
+  Measured live on mainnet: build+sign 1 µs against a 311–763 ms venue round trip.
 - `credentials.env.example` — a git-tracked, annotated template for `secrets/*.env`, including how to
   tell an agent wallet from the master account it trades for, and where the network is selected.
 - `hl_live_check` understands spot: a `@<index>` or `A/B` coin name loads `spotMeta` automatically
@@ -41,13 +41,22 @@ All notable changes to this project are documented here. The project follows
   rather than a failure. Verified on mainnet against HYPE/USDC, UBTC/USDC and UETH/USDC.
 - `L2BookOptions::fast` — subscribe to the venue's 5-level `l2Book` publish path (`subscribeL2Book`
   and `subscribeBook` both take it; `hl_book_printer --fast` demonstrates it). Measured on mainnet
-  BTC and ETH on 2026-09-19: snapshots ~0.54 s apart against ~5.3 s for the default 20-level feed,
-  with no consistent per-snapshot delivery lead in either direction. `docs/API.md` §4.1 has the
+  BTC and ETH on 2026-09-19: snapshots ~0.54 s apart against ~5.35 s for the default 20-level feed,
+  with no dependable per-snapshot delivery lead (median 13–19 ms, spread −70..+58 ms). `docs/API.md` §4.1 has the
   numbers and says which of the three feeds to use for what.
 - `MarketDataClient::l2BookSubscriptionJson(coin, options)` — the exact string `subscribeL2Book`
   sends, so a subscription made with `nSigFigs` or `fast` can be reproduced for `unsubscribeRaw`.
 
 ### Documentation
+- **Every benchmark and live-run figure in the documentation was re-measured on one stand** — an AWS
+  `c8a.2xlarge` (AMD EPYC Zen 5, not bare metal) in Tokyo with cores 4–7 isolated (`isolcpus`,
+  `nohz_full`, `rcu_nocbs`, IRQs moved off, `idle=poll`), Clang 21, median of five repetitions. Order
+  entry is 15.9 µs by default and **1.17 µs** with precomputed nonces there (1.05 µs with
+  `HL_NATIVE=ON`); parsing a `bbo` frame is 169 ns. The live figures come from runs made from that
+  stand: 16/16 on testnet over both transports, and the eleven-instrument mainnet matrix with
+  120 signed actions — build+sign 1 µs against a 311–763 ms venue round trip. `docs/BENCHMARKS.md`
+  states the environment, the isolation settings and the reproduction command; no figure from the
+  earlier development machine is quoted anywhere any more.
 - Documented Hyperliquid's **unified account** mode, which is the venue default: one USDC balance in
   the spot clearinghouse backs spot and perps together, there is no spot↔perp transfer, and
   `clearinghouseState.accountValue` therefore reports only the collateral committed to perps — zero
@@ -156,7 +165,8 @@ the official Python SDK and the live venue.
 
 ### Added
 - **Precomputed-nonce ECDSA** (`Signer::enableNoncePool`, `refillNonces`, `noncePoolSize`, `signingStats`;
-  `ExchangeConfig::precomputedNonces`; quoter `--presign`): signing 38 µs → 0.17 µs, order entry 42 µs → 3.3 µs.
+  `ExchangeConfig::precomputedNonces`; quoter `--presign`): signing 14.7 µs → 44 ns, order entry 15.9 µs → 1.17 µs
+  (figures from the current benchmark stand, `docs/BENCHMARKS.md`).
   Single-use hedged nonces, fork protection, automatic RFC 6979 fallback.
 - Constant-time arithmetic modulo the secp256k1 order, cross-checked against OpenSSL BIGNUM.
 - `RequestBuilder::wsPostAction` / `appendPayload` (single-allocation signed frames), `Decimal::toChars`.
@@ -166,8 +176,9 @@ the official Python SDK and the live venue.
 - Stage benchmarks for order entry; nonce-pool, scalar and address-fallback tests (ThreadSanitizer clean).
 
 ### Changed
-- Keccak-f[1600] unrolled: −33 % per hash (at parity with OpenSSL assembly).
-- WebSocket masking 8 bytes at a time: 565 ns → 59 ns for an order frame.
+- Keccak-f[1600] unrolled. On the current benchmark stand (Zen 5, Clang 21) the loop form is already as
+  fast, so the gain there is nil.
+- WebSocket masking 8 bytes at a time: 147 ns → 28 ns for an order frame.
 
 ### Fixed
 - `TlsStream` only tried the first resolved address; an unreachable CDN edge IP stalled connects and every

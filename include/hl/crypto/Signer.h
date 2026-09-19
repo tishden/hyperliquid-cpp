@@ -78,7 +78,7 @@ public:
     // ── precomputed-nonce ("offline/online") signing ────────────────────────
 
     /**
-     * @brief Enable signing with precomputed nonces — cuts a signature from ~40 µs to well under 1 µs.
+     * @brief Enable signing with precomputed nonces — cuts a signature from ~15 µs to well under 0.1 µs.
      *
      * ECDSA cost is dominated by the scalar multiplication R = k·G. With the pool enabled that work
      * is done ahead of time: each pool entry holds (r, k⁻¹, r·d) for a fresh secret nonce k, and

@@ -369,22 +369,23 @@ canceled (by oid) and are included in `liveOrders()`. Positions include their fi
 
 ## 14. Latency of the order path
 
-Measured on the reference machine (Intel i7-3820, 2012) — see [BENCHMARKS.md](BENCHMARKS.md).
+Measured on the benchmark stand (AWS `c8a.2xlarge`, AMD EPYC Zen 5, isolated core, Clang 21) — see
+[BENCHMARKS.md](BENCHMARKS.md#environment).
 
 | Stage of `placeOrder` → bytes queued on the socket | Time |
 |---|---|
-| validation, table insert, cloid (not part of the benchmark) | < 0.2 µs |
-| MessagePack + JSON encoding | 0.36 µs |
-| action hash (1 Keccak permutation) | 0.76 µs |
-| EIP-712 digest (2 Keccak permutations) | 1.55 µs |
-| ECDSA — RFC 6979 (default) | 38 µs |
-| ECDSA — precomputed nonce (`precomputedNonces > 0`) | **0.17 µs** |
-| frame assembly + WebSocket masking | 0.1 µs |
-| **total, default** (benchmark `Order_EndToEnd_SignedPayload`) | **≈ 42 µs** |
-| **total, precomputed nonces** (benchmark `Order_EndToEnd_Precomputed`) | **≈ 3.3 µs** |
+| validation, table insert, cloid | not benchmarked separately |
+| MessagePack + JSON encoding | 0.19 µs |
+| action hash (1 Keccak permutation) | 0.26 µs |
+| EIP-712 digest (2 Keccak permutations) | 0.51 µs |
+| ECDSA — RFC 6979 (default) | 14.7 µs |
+| ECDSA — precomputed nonce (`precomputedNonces > 0`) | **0.04 µs** |
+| frame assembly, hex, nonce, WebSocket masking | ≈ 0.17 µs |
+| **total, default** (benchmark `Order_EndToEnd_SignedPayload`) | **≈ 15.9 µs** |
+| **total, precomputed nonces** (benchmark `Order_EndToEnd_Precomputed`) | **≈ 1.17 µs** |
 
-Keccak dominates the optimised path; it is at parity with OpenSSL's assembly implementation on this CPU and
-scales with single-core speed (≈ 2× faster on current server cores). Everything after the bytes are queued —
+Keccak dominates the optimised path (two thirds of it) and scales with single-core speed; `-march=native`
+(`HL_NATIVE=ON`) takes the total to ≈ 1.05 µs on the same CPU. Everything after the bytes are queued —
 TLS encryption, kernel, network, and the venue's block time (~0.2 s) — is outside the client.
 
 ## 15. Worked timelines

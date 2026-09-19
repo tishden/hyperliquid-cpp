@@ -494,16 +494,18 @@ while (!loop.stopped()) { loop.runOnce(0); }
 | `fast` | `bool` (default `false`) | Subscribe to the venue's 5-level publish path instead of the 20-level one. Same channel, same frame shape, same parsing — only depth and rate differ. Omitted from the JSON when `false`. |
 
 **What `fast` actually buys you.** Despite the name, it is a *rate* difference, not a latency one.
-Measured on mainnet BTC and ETH on 2026-09-19 from a single host:
+Measured on mainnet BTC and ETH on 2026-09-19 from the benchmark stand in Tokyo
+([BENCHMARKS.md](BENCHMARKS.md#how-fast-the-venue-actually-feeds-you)):
 
 | Feed | Depth | Snapshot interval (p50) |
 |---|---|---|
-| `l2Book` default | 20 levels/side | ~5.3 s |
+| `l2Book` default | 20 levels/side | ~5.35 s |
 | `l2Book` with `fast` | 5 levels/side | ~0.54 s |
-| `bbo` | best bid/offer only | ~7 messages/s (~145 ms) |
+| `bbo` | best bid/offer only | 150–180 ms (~3–5 messages/s) |
 
-Matching snapshots of the two feeds by their venue timestamp showed no consistent delivery lead in
-either direction (within ±100 ms, sign varying between runs and coins). So:
+Matching snapshots of the two feeds by their venue timestamp, the `fast` copy usually arrived first
+— by a median of 13–19 ms — but individual snapshots ranged from 70 ms ahead to 58 ms behind, so it
+is not a lead to build on. So:
 
 - **Top of book only** — `bbo` already pushes every change; `fast` adds little.
 - **Levels 2..5 kept fresh** (depth-aware quoting, queue estimates) — `fast` refreshes them ~10×
@@ -951,7 +953,7 @@ enum class ActionTransport : std::uint8_t { WebSocket, Http };
 | `accountAddress` | `std::string` | empty | Master account address. Required when `privateKey` belongs to an agent wallet; empty = signer's own address, **or** the master reported by `userRole` when the signer turns out to be an agent (see Lifecycle). |
 | `vaultAddress` | `std::string` | empty | Trade for a vault / sub-account. Included in every signature and payload; also used as the `user` for streams and info queries. |
 | `transport` | `ActionTransport` | `WebSocket` | See above |
-| `precomputedNonces` | `std::size_t` | `0` (off) | Size of the precomputed-nonce ECDSA pool kept full by an internal background thread ([§6.1](#61-signer-actionhash-agentdigest)). Cuts signing from ~40 µs to ~0.17 µs per action; signatures become randomised. Recommended: 256–1024 for active quoting. |
+| `precomputedNonces` | `std::size_t` | `0` (off) | Size of the precomputed-nonce ECDSA pool kept full by an internal background thread ([§6.1](#61-signer-actionhash-agentdigest)). Cuts signing from ~15 µs to ~0.05 µs per action; signatures become randomised. Recommended: 256–1024 for active quoting. |
 | `requestTimeoutMs` | `std::int64_t` | `10000` | Deadline for a **WebSocket** post response. On expiry the action fails with `Timeout` and affected orders are reconciled. (HTTP actions use `http.requestTimeoutMs`.) |
 | `loadSpotAssets` | `bool` | `false` | Also load `spotMeta`, so spot pairs can be traded, **and** seed spot balances from `spotClearinghouseState`. Adds one `/info` round-trip to start-up; readiness waits for it. |
 | `subscribeUserEvents` | `bool` | `true` | Also subscribe to `userEvents`. This is the only source of `onLiquidation` and of venue-initiated cancels; leave it on unless you are minimising the private stream. |
@@ -1400,10 +1402,10 @@ recorded when the action completes, including when it completes with an error or
 whose response never arrives contributes nothing. There is no percentile tracking — keep your own
 histogram if you need tails; these counters exist so an operator can see drift without one.
 
-Expect the two scales to be far apart. On the reference machine `buildAndSign` is single-digit
-microseconds, while a mainnet round trip measured **672–1076 ms** in a live run
+Expect the two scales to be far apart. On the benchmark stand `buildAndSign` is ~1 µs, while a
+mainnet round trip measured **311–763 ms** over 48 orders in live runs
 ([RUNNING.md §4](RUNNING.md#4-acceptance-run-against-a-live-venue)): the venue's block production
-dominates by four orders of magnitude.
+dominates by five orders of magnitude.
 
 A response arriving after its action already timed out, or after a disconnect, is ignored — reconciliation
 establishes the true state.
@@ -1745,7 +1747,7 @@ digest          = keccak256( 0x19 ‖ 0x01 ‖ domainSeparator ‖ structHash )
 | `Signature signL1Action(msgpackAction, vault, nonce, expiresAfter, isMainnet) const` | `signDigest(agentDigest(actionHash(…), isMainnet))` |
 | `void enableNoncePool(std::size_t capacity, bool backgroundThread = true)` | Enable precomputed-nonce signing (below). `capacity` is rounded up to a power of two; `0` disables. Throws `std::runtime_error` if a secp256k1 context cannot be created. |
 | `void disableNoncePool()` | Join the refill thread and wipe all precomputed nonces |
-| `std::size_t refillNonces(std::size_t maxCount)` | Produce up to `maxCount` nonces on the calling thread (~58 µs each); returns how many were added. `0` if the pool is disabled or full, or another refill is running. |
+| `std::size_t refillNonces(std::size_t maxCount)` | Produce up to `maxCount` nonces on the calling thread (~20 µs each); returns how many were added. `0` if the pool is disabled or full, or another refill is running. |
 | `std::size_t noncePoolSize() const` | Nonces ready now |
 | `SigningStats signingStats() const` | `{precomputed, deterministic}` — signatures produced by each path |
 
@@ -1755,10 +1757,10 @@ Not copyable. Signing methods are `const` and thread-safe, with or without the p
 
 #### Precomputed-nonce signing
 
-ECDSA signing is `R = k·G; r = R.x; s = k⁻¹·(z + r·d) mod n`. The scalar multiplication `k·G` costs ~95 % of the
-~40 µs of a signature and does not depend on the message. With the pool enabled, entries `(r, k⁻¹, r·d, parity(R.y))`
+ECDSA signing is `R = k·G; r = R.x; s = k⁻¹·(z + r·d) mod n`. The scalar multiplication `k·G` is almost all of the
+~15 µs of a signature and does not depend on the message. With the pool enabled, entries `(r, k⁻¹, r·d, parity(R.y))`
 are computed ahead of time — by an internal background thread, or by `refillNonces` wherever you call it — and the
-signature itself becomes `s = k⁻¹·(z + r·d) mod n` plus low-s normalisation: **~0.17 µs**.
+signature itself becomes `s = k⁻¹·(z + r·d) mod n` plus low-s normalisation: **~44 ns**.
 
 | Property | Behaviour |
 |---|---|
@@ -1768,7 +1770,7 @@ signature itself becomes `s = k⁻¹·(z + r·d) mod n` plus low-s normalisation
 | Nonce quality | `k = HMAC-SHA256(privateKey, 32 bytes CSPRNG ‖ counter) mod n`, rejected if 0 or ≥ n — unpredictable even if the system RNG is weak |
 | `fork()` | A child process never uses the parent's pool (a `pthread_atfork` generation counter disables it) — sharing nonces between processes would leak the key |
 | Empty pool | Falls back to RFC 6979 transparently; watch `signingStats().deterministic` |
-| Throughput | One refill thread produces ~17 000 nonces/s on the reference CPU; a pool of 256 absorbs bursts of 256 actions |
+| Throughput | One refill thread produces ~51 000 nonces/s on the benchmark stand; a pool of 256 absorbs bursts of 256 actions |
 | Memory | ~112 bytes per entry; secrets live only in the pool and the signing stack frame |
 
 ```cpp

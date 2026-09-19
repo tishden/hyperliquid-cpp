@@ -65,7 +65,7 @@ bug with no test suite waiting for it. That is the work being sold, not the HTTP
 
 | | Open SDK | This library |
 |---|---|---|
-| Signing an order | not a stated goal | **3.3 µs** (from 43 µs) via precomputed-nonce ECDSA |
+| Signing an order | not a stated goal | **1.17 µs** order → signed frame (from 15.9 µs) via precomputed-nonce ECDSA |
 | Event loop | Boost.Asio `io_context` | own epoll reactor, single thread, no allocations on the hot path |
 | Published numbers | none in the README | benchmark suite plus live mainnet measurements ([BENCHMARKS.md](BENCHMARKS.md)) |
 
@@ -73,7 +73,7 @@ The open SDK's README makes no latency claim and points to a separate project of
 low-latency order routing. Here the signing path was profiled, rewritten and re-measured, and the
 result is reproducible from the repository.
 
-The honest bound, stated the same way in our own docs: the venue's round trip is ~780 ms, so the
+The honest bound, stated the same way in our own docs: the venue's round trip is ~435 ms, so the
 client is never the bottleneck. What the engineering buys is a predictable, allocation-free,
 single-threaded path you can reason about inside your own hot loop — not trading profit.
 

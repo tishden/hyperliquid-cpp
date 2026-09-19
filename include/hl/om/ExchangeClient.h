@@ -51,7 +51,7 @@ struct ExchangeConfig {
     ActionTransport transport{ActionTransport::WebSocket};
     /**
      * Precomputed-nonce ECDSA pool size (0 = off). When > 0 the Signer keeps this many nonces ready
-     * on an internal background thread, cutting signing from ~40 µs to ~0.2 µs per action
+     * on an internal background thread, cutting signing from ~15 µs to ~0.05 µs per action
      * (see Signer::enableNoncePool). Signatures are randomised instead of RFC 6979.
      */
     std::size_t precomputedNonces{0};
