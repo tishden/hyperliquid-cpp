@@ -1,8 +1,10 @@
 # Licensing — in plain language
 
-This page explains the [LICENCE](../LICENSE) in ordinary words, for a buyer deciding whether the terms work
-and for a seller filling in the blanks. **The Agreement itself governs; this page does not.** Neither is legal
-advice — have your counsel read the Agreement before signing.
+This page explains the licence in ordinary words, for a buyer deciding whether the terms work and for a
+seller preparing the deal. The licence itself exists in two equal versions — [English](../LICENSE) and
+[Russian](../LICENSE.ru) — and the parties sign or accept one of them; that version governs.
+**The licence governs; this page does not.** Neither is legal advice: have your counsel read the licence
+before signing.
 
 - [1. What you get](#1-what-you-get)
 - [2. What you may do](#2-what-you-may-do)
@@ -29,7 +31,7 @@ not get exclusivity.
 | Modify it, fork it internally, strip parts out | Yes, and you never have to show those changes to anyone |
 | Ship it inside your own product | Yes, **compiled** (static/shared library, binary, container running your binary) |
 | Run it behind a hosted or managed service for clients | Yes, as long as no client receives the source |
-| Share the source inside your company | Yes — employees, affiliates, contractors and advisers under confidentiality |
+| Share the source inside your company | Yes — employees, group companies, contractors and advisers under confidentiality |
 | Keep using it if the seller later open-sources the library | Yes; publication does not touch your rights |
 | Transfer the licence when your company is acquired | Yes, with written notice within 30 days |
 
@@ -60,7 +62,7 @@ to others, and may publish it or release it under an open-source licence at any 
 
 What that means for you as a buyer:
 
-- Your rights in the copy you received are unaffected by anything the seller does later (clause 5.3).
+- Your rights in the copy you received are unaffected by anything the seller does later (clause 4.3).
 - If the seller publishes the code, your confidentiality obligation and the resale/publication restrictions
   fall away **for the material that was published** — you are not left holding obligations over something
   that is public. They continue for anything not published, and for your own modifications.
@@ -93,9 +95,9 @@ The library links three third-party components, all permissive, listed with vers
 [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md): OpenSSL (Apache-2.0), libsecp256k1 (MIT) and simdjson
 (Apache-2.0). GoogleTest and Google Benchmark are build-time only and are not shipped in your product.
 
-The seller's clean-provenance warranty covers *its* code, not those components — nobody can warrant code they
-did not write. What the seller does warrant is that the list is accurate and that, to its knowledge, those
-licences permit this use. When you ship a product, you carry their attribution requirements (a notices file in
+The seller's clean-provenance warranty (clause 5.1) covers *its* code, not those components — nobody can
+warrant code they did not write. What the seller does warrant (clause 5.3) is that the list is accurate and
+that, to its knowledge, those licences permit this use. When you ship a product, you carry their attribution requirements (a notices file in
 your distribution is the usual way).
 
 Two more provenance facts, stated so there are no surprises:
@@ -109,7 +111,7 @@ Two more provenance facts, stated so there are no surprises:
 **Can I use it in production the day I receive it?** Yes. The licence is perpetual and starts on delivery.
 
 **Do I have to publish my changes?** No. There is no copyleft anywhere in the stack, and the seller warrants
-that (clause 6.1(d)).
+that (clause 5.1(d)).
 
 **Can I give the source to a contractor who builds my trading system?** Yes, if they are bound by
 confidentiality and use it only for you.
@@ -137,19 +139,21 @@ line items.
 
 ## 8. Before signing — checklist for both sides
 
-**Seller, fill in the blanks in [LICENSE](../LICENSE):**
+The licence needs no blanks filled in: the parties, the price and the delivery live in the Order, and the
+governing law defaults to the licensor's country unless the Order says otherwise.
 
-- [ ] `[LICENSOR LEGAL NAME]` — the entity that owns the code and will sign
-- [ ] `[GOVERNING LAW]`, `[JURISDICTION]`, `[ARBITRATION RULES]` — pick one forum; for cross-border deals
-      institutional arbitration is usually easier to enforce than a home court
-- [ ] Decide what the Order says about: price and payment, delivery method (repo access, archive, commit
-      hash), support and updates, exclusivity (if any), and whether the liability cap sits at the fee or at a
-      multiple of it
-- [ ] Record the delivered version: tag, commit hash and a hash of the archive, so "the Software as
-      delivered" is unambiguous later
-- [ ] Confirm the provenance claims you are warranting: that the code is yours, the third-party list is
-      complete and correct, and no employer/ex-client IP is mixed in
-- [ ] Check export-control and sanctions exposure for the counterparty's jurisdiction
+**Seller, put in the Order:**
+
+- [ ] Both parties' legal names, the price and the payment terms
+- [ ] The exact version delivered — tag, commit hash and a hash of the archive — so "the Software as
+      delivered" in the warranty is unambiguous later
+- [ ] Delivery method (repository access, archive) and the date
+- [ ] Whether support, maintenance or updates are included, and for how long
+- [ ] Any variation from the default: another governing law or arbitration, exclusivity or a notice period
+      before open-sourcing, a different liability cap
+- [ ] Which language version is being signed
+- [ ] Before signing, re-confirm what you are warranting: the code is yours, the third-party list is complete,
+      and no employer's or former client's IP is mixed in
 
 **Buyer, check:**
 

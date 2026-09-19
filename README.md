@@ -206,5 +206,6 @@ the source, distribute it as a connector or SDK, or patent what it embodies. The
 provenance — its own code, no hidden copyleft, no back doors — and indemnifies against third-party IP claims,
 while keeping the right to license, resell or open-source the library to others.
 
-Full terms: [LICENSE](LICENSE) · plain-language explanation and FAQ: [docs/LICENSING.md](docs/LICENSING.md) ·
-third-party components: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Full terms: [LICENSE](LICENSE) (English) · [LICENSE.ru](LICENSE.ru) (Russian, equal force — the parties sign
+one of them) · plain-language explanation and FAQ: [docs/LICENSING.md](docs/LICENSING.md) · third-party
+components: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

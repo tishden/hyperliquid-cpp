@@ -11,6 +11,9 @@ All notable changes to this project are documented here. The project follows
   publication, no connector/SDK redistribution, no patenting of the embodied algorithms; provenance warranty
   and IP indemnity from the licensor, who keeps the right to license, resell or open-source the library.
 - Added `docs/LICENSING.md` — the licence in plain language, with an FAQ and a pre-signature checklist.
+- Simplified the licence wording and removed every placeholder: the parties come from the Order and the
+  governing law defaults to the licensor's country. Added `LICENSE.ru`, a Russian version of equal force;
+  the parties sign one of the two.
 
 ## [1.3.0] — 2026-09-19
 
