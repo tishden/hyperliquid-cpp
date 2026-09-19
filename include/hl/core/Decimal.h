@@ -77,10 +77,21 @@ public:
     constexpr Decimal& operator+=(Decimal o) noexcept { raw_ += o.raw_; return *this; }
     constexpr Decimal& operator-=(Decimal o) noexcept { raw_ -= o.raw_; return *this; }
 
-    /// Product of two decimals, truncated toward zero to 8 decimals (128-bit intermediate).
+    /**
+     * @brief Product of two decimals, truncated toward zero (128-bit intermediate).
+     *
+     * Saturates at ±max() instead of wrapping, so a notional computed from absurd inputs can never
+     * turn into a valid-looking negative price. Check with `isSaturated()` if the distinction matters.
+     */
     [[nodiscard]] Decimal mul(Decimal o) const noexcept;
-    /// Quotient of two decimals, truncated toward zero; returns zero when dividing by zero.
+    /// Quotient of two decimals, truncated toward zero; zero when dividing by zero; saturating.
     [[nodiscard]] Decimal div(Decimal o) const noexcept;
+
+    /// Largest / smallest representable value (±92 233 720 368.54775807).
+    [[nodiscard]] static constexpr Decimal max() noexcept { return Decimal{9'223'372'036'854'775'807LL}; }
+    [[nodiscard]] static constexpr Decimal min() noexcept { return Decimal{-9'223'372'036'854'775'807LL - 1}; }
+    /// True when the value sits at a representation limit (a saturated arithmetic result).
+    [[nodiscard]] constexpr bool isSaturated() const noexcept { return raw_ == max().raw_ || raw_ == min().raw_; }
 
     constexpr auto operator<=>(const Decimal&) const noexcept = default;
     constexpr bool operator==(const Decimal&) const noexcept = default;
@@ -96,7 +107,7 @@ std::ostream& operator<<(std::ostream& os, Decimal value);
 
 /// Rounding direction used by the price/size helpers.
 enum class RoundingMode : std::uint8_t {
-    Down,     ///< toward negative infinity
+    Down,     ///< toward negative infinity (but see AssetInfo::roundSz, which rounds toward zero)
     Up,       ///< toward positive infinity
     Nearest,  ///< half away from zero
 };

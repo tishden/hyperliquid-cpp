@@ -20,9 +20,18 @@ struct MockVenue::Conn final : hl::IoHandler, hl::WsFrameSink {
 
     void onIoEvent(std::uint32_t /*events*/) override {
         char buf[65536];
-        const ssize_t n = ::recv(fd, buf, sizeof(buf), 0);
-        if (n <= 0) {
+        // Non-blocking: a client callback may run the event loop and consume this readiness first,
+        // leaving the queued event with nothing to read.
+        const ssize_t n = ::recv(fd, buf, sizeof(buf), MSG_DONTWAIT);
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+                return;
+            }
             venue->closeConn(fd);  // destroys *this
+            return;
+        }
+        if (n == 0) {
+            venue->closeConn(fd);
             return;
         }
         if (websocket) {

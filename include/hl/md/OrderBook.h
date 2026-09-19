@@ -37,7 +37,15 @@ public:
     void applySnapshot(const L2BookMsg& msg) noexcept;
 
     /**
-     * @brief Overlay a best-bid/offer update.
+     * @brief Overlay a best-bid/offer update on top of the last snapshot.
+     *
+     * Levels the new best price moved through are dropped, the best level is inserted or resized,
+     * and stale levels on the other side that would now cross are removed — so a locked or crossed
+     * update resolves to a consistent book rather than a crossed one, at the cost of dropping the
+     * offending levels. A side with no best price in the update is emptied, which leaves the book
+     * `!isValid()` until the next snapshot. Levels are assumed sorted best-first, as the venue
+     * sends them.
+     *
      * @return false if the update is older than the last applied snapshot and was ignored.
      */
     bool applyBbo(const BboMsg& msg) noexcept;

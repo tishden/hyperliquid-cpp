@@ -16,6 +16,7 @@
 #include <string>
 #include <string_view>
 
+#include "common/Credentials.h"
 #include "hl/hyperliquid.h"
 #include "testnet_quoter/Quoter.h"
 
@@ -49,37 +50,6 @@ void usage() {
         "environment: HL_PRIVATE_KEY, HL_ACCOUNT_ADDRESS, HL_VAULT_ADDRESS\n");
 }
 
-std::string env(const char* name) {
-    const char* v = std::getenv(name);
-    return v != nullptr ? v : "";
-}
-
-void loadKeyFile(const std::string& path, std::string& key, std::string& account, std::string& vault) {
-    std::ifstream in(path);
-    if (!in) {
-        std::fprintf(stderr, "cannot read key file %s\n", path.c_str());
-        std::exit(2);
-    }
-    for (std::string line; std::getline(in, line);) {
-        const auto eq = line.find('=');
-        if (line.empty() || line[0] == '#' || eq == std::string::npos) {
-            continue;
-        }
-        const std::string k = line.substr(0, eq);
-        std::string v = line.substr(eq + 1);
-        while (!v.empty() && (v.back() == '\r' || v.back() == ' ')) {
-            v.pop_back();
-        }
-        if (k == "HL_PRIVATE_KEY") {
-            key = v;
-        } else if (k == "HL_ACCOUNT_ADDRESS") {
-            account = v;
-        } else if (k == "HL_VAULT_ADDRESS") {
-            vault = v;
-        }
-    }
-}
-
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -90,9 +60,7 @@ int main(int argc, char** argv) {
     bool mainnetAck = false;
     bool httpTransport = false;
     std::size_t presign = 256;
-    std::string key = env("HL_PRIVATE_KEY");
-    std::string account = env("HL_ACCOUNT_ADDRESS");
-    std::string vault = env("HL_VAULT_ADDRESS");
+    example::Credentials credentials = example::credentialsFromEnv();
 
     for (int i = 1; i < argc; ++i) {
         const std::string_view a = argv[i];
@@ -126,7 +94,10 @@ int main(int argc, char** argv) {
         } else if (a == "--dry-run") {
             settings.dryRun = true;
         } else if (a == "--key-file") {
-            loadKeyFile(next(), key, account, vault);
+            if (!example::loadCredentialsFile(next(), credentials)) {
+                std::fprintf(stderr, "cannot read the key file\n");
+                return 2;
+            }
         } else if (a == "--mainnet") {
             mainnet = true;
         } else if (a == "--i-understand-this-trades-real-money") {
@@ -150,7 +121,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "--notional must be at least 10 USDC (venue minimum order value)\n");
         return 2;
     }
-    if (!settings.dryRun && key.empty()) {
+    if (!settings.dryRun && credentials.privateKey.empty()) {
         std::fprintf(stderr, "HL_PRIVATE_KEY is not set (use --dry-run to run without a key)\n");
         return 2;
     }
@@ -188,9 +159,9 @@ int main(int argc, char** argv) {
     } else {
         hl::ExchangeConfig cfg;
         cfg.network = network;
-        cfg.privateKey = key;
-        cfg.accountAddress = account;
-        cfg.vaultAddress = vault;
+        cfg.privateKey = credentials.privateKey;
+        cfg.accountAddress = credentials.accountAddress;
+        cfg.vaultAddress = credentials.vaultAddress;
         cfg.transport = httpTransport ? hl::ActionTransport::Http : hl::ActionTransport::WebSocket;
         cfg.precomputedNonces = presign;
         try {

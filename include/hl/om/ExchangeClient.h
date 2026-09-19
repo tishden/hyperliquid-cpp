@@ -54,8 +54,41 @@ struct ExchangeConfig {
     std::size_t precomputedNonces{0};
     /// Deadline for an action response before the order is reconciled via `orderStatus`.
     std::int64_t requestTimeoutMs{10'000};
-    /// Also load spot assets (`spotMeta`) so spot pairs can be traded.
+    /// Also load spot assets (`spotMeta`) so spot pairs can be traded, and seed spot balances.
     bool loadSpotAssets{false};
+    /// Subscribe to `userEvents` as well, which is the only source of liquidation notifications
+    /// and of cancels performed by the venue itself.
+    bool subscribeUserEvents{true};
+    /// At start-up, adopt orders the venue already has open for this account (as `Order::external`),
+    /// so a restarted process can see and cancel what the previous one left behind.
+    bool adoptExistingOrders{true};
+    /// Builder code applied to order actions that do not pass one explicitly (requires `approveBuilderFee`).
+    std::optional<BuilderFee> builderFee{};
+    /// Send cancels with the venue's `fast` flag (future mempool prioritisation). Trigger orders are
+    /// always canceled without it, because the venue rejects fast cancels for them.
+    bool fastCancels{true};
+    /**
+     * Attach `expiresAfter = now + actionExpiryMs` to every signed action (0 = off). The venue drops
+     * an action that reaches it later than this — a cheap per-action dead-man's switch for stale
+     * orders after a network stall. Note: actions rejected for a stale `expiresAfter` cost 5× the
+     * usual address-based rate-limit budget.
+     */
+    std::int64_t actionExpiryMs{0};
+    /**
+     * How often to refresh the account's request budget from `userRateLimit` (0 = never).
+     * Hyperliquid grants ~1 request per USDC of traded volume on top of a 10 000 buffer, counted
+     * **per order or cancel in a batch**; running out throttles the account to one request per
+     * 10 s, so a market maker should watch it.
+     */
+    std::int64_t rateLimitRefreshMs{60'000};
+    /// Warn (once per crossing) when the remaining request budget falls below this fraction.
+    double rateLimitWarnFraction{0.1};
+    /**
+     * Nonce source. The venue tracks nonces **per signing key**, so two clients that share a key
+     * (e.g. one for the master account and one for a sub-account) must share one generator.
+     * Empty = this client owns its own.
+     */
+    std::shared_ptr<NonceGenerator> nonces{};
     /// Terminal orders (filled / canceled / rejected) are kept this long for lookups, then evicted.
     std::int64_t terminalOrderRetentionMs{60'000};
     /// Overrides for proxies / mocks. Empty = network defaults.
@@ -95,6 +128,7 @@ struct Order {
     Tif tif{Tif::Gtc};
     bool reduceOnly{false};
     bool isTrigger{false};
+    std::optional<TriggerSpec> trigger{};  ///< set for stop / take-profit orders; preserved by modify()
     OrderState state{OrderState::PendingNew};
     bool cancelPending{false};       ///< a cancel request is in flight
     bool modifyPending{false};       ///< a modify request is in flight
@@ -119,7 +153,14 @@ struct OrderRequest {
     std::optional<Cloid> cloid{};         ///< generated when empty
 };
 
-/// Callbacks of an ExchangeClient. Invoked on the event-loop thread.
+/**
+ * @brief Callbacks of an ExchangeClient. Invoked on the event-loop thread.
+ *
+ * What a callback may do: call any client method (place, cancel, modify, queries), and run the
+ * event loop re-entrantly (the parsers and transports are re-entrancy safe, at the cost of extra
+ * buffers). What it must not do: destroy the client or the loop it is called from, or block for
+ * long — every other client on the loop is stalled meanwhile.
+ */
 class ExchangeListener {
 public:
     virtual ~ExchangeListener() = default;
@@ -132,6 +173,10 @@ public:
     virtual void onOrderUpdate(const Order& /*order*/) {}
     /// A new execution of one of the account's orders (deduplicated by trade id).
     virtual void onFill(const Fill& /*fill*/) {}
+    /// This account was liquidated — positions were closed by the venue (requires `subscribeUserEvents`).
+    virtual void onLiquidation(const LiquidationMsg& /*msg*/) {}
+    /// A funding payment was applied to the account (requires `subscribeUserEvents`).
+    virtual void onFunding(const UserFundingMsg& /*msg*/) {}
     /// Errors not tied to a specific order (start-up failures, venue error frames, …).
     virtual void onError(const Error& /*error*/) {}
 };
@@ -173,22 +218,58 @@ public:
     // ── order entry ─────────────────────────────────────────────────────────
     /// Place one order. Returns its cloid, or an Error{Rejected} if validation fails.
     [[nodiscard]] Result<Cloid> placeOrder(const OrderRequest& request);
-    /// Place several orders in one signed action (atomic submission, one rate-limit unit per 40).
-    [[nodiscard]] Result<std::vector<Cloid>> placeOrders(std::span<const OrderRequest> requests);
+    /**
+     * @brief Place several orders in one signed action (atomic submission, one rate-limit unit per 40).
+     * @param grouping `Grouping::NormalTpsl` / `PositionTpsl` attach the trigger orders that follow the
+     *                 parent order in @p requests as its take-profit / stop-loss children; a
+     *                 `PriorityRate` instead pays an order-priority fee for the whole action.
+     * @param builder  Builder code for this action; defaults to `ExchangeConfig::builderFee`.
+     */
+    [[nodiscard]] Result<std::vector<Cloid>> placeOrders(std::span<const OrderRequest> requests,
+                                                         OrderGrouping grouping = Grouping::Na,
+                                                         const std::optional<BuilderFee>& builder = std::nullopt);
     /// Cancel an order placed by this client (or seen via updates).
     Error cancel(const Cloid& cloid);
     /// Cancel by exchange id (works for orders placed elsewhere).
     Error cancelByOid(std::string_view coin, std::uint64_t oid);
     /// Cancel every live order known locally, optionally restricted to one coin. One action per call.
     Error cancelAll(std::string_view coin = {});
-    /// Amend price and size of a resting order (keeps the cloid; the venue assigns a new oid).
-    Error modify(const Cloid& cloid, Decimal newPx, Decimal newSz);
-    /// Dead-man's switch: cancel all orders at @p timeMs (≥ now + 5 s); nullopt clears it.
+    /**
+     * @brief Amend a resting order in place: same cloid, side, time-in-force and reduce-only flag.
+     *
+     * The venue implements this as cancel + replace, so the exchange order id usually changes; the
+     * client follows it (see docs/ORDER_MANAGEMENT.md §9). A trigger order keeps its trigger unless
+     * @p newTrigger is given — @p newPx is the limit price, not the trigger price.
+     */
+    Error modify(const Cloid& cloid, Decimal newPx, Decimal newSz,
+                 std::optional<TriggerSpec> newTrigger = std::nullopt);
+    /**
+     * @brief Dead-man's switch: ask the venue to cancel all orders at @p timeMs; nullopt clears it.
+     *
+     * The time must be at least 5 s in the future (validated locally). The venue only enables the
+     * feature for accounts with at least $1 000 000 of traded volume and allows at most 10 triggers
+     * per UTC day — otherwise it answers with `Error{Venue}` explaining which limit was hit.
+     */
     Error scheduleCancel(std::optional<std::int64_t> timeMs, ActionCallback callback = {});
     /// Set leverage for a perp.
     Error updateLeverage(std::string_view coin, std::uint32_t leverage, bool isCross, ActionCallback callback = {});
+    /// Add (positive) or remove (negative) isolated margin on a perp position, in USDC (≥ 1e-6 granularity).
+    Error updateIsolatedMargin(std::string_view coin, Decimal usdc, ActionCallback callback = {});
+    /// Spend accumulated rate-limit budget to reserve additional request weight.
+    Error reserveRequestWeight(std::uint64_t weight, ActionCallback callback = {});
+    /// Send a `noop` action: no market effect, burns one nonce (signing health check / nonce advance).
+    Error noop(ActionCallback callback = {});
     /// Sign and submit any pre-built action.
     void submitAction(const EncodedAction& action, ActionCallback callback);
+
+    /**
+     * @brief Send an `/info` request over the private WebSocket instead of HTTP.
+     *
+     * Saves an HTTP round trip on the hot path (e.g. `orderStatus` during reconciliation). The raw
+     * JSON payload of the response is handed to @p callback. Falls back to `Error{Transport}` when
+     * the socket is not open; the request is not queued.
+     */
+    void infoOverWebSocket(std::string infoJson, std::function<void(const Result<std::string>&)> callback);
 
     // ── state ───────────────────────────────────────────────────────────────
     [[nodiscard]] const Order* findOrder(const Cloid& cloid) const noexcept;
@@ -213,8 +294,17 @@ public:
         std::uint64_t timeouts{0};
         std::uint64_t fills{0};
         std::uint64_t reconciles{0};
+        std::uint64_t rateLimitHits{0};    ///< HTTP 429 responses (the queue pauses after each)
+        std::uint64_t addressUnitsUsed{0}; ///< order/cancel entries submitted (the venue's address-based unit)
     };
     [[nodiscard]] const Stats& stats() const noexcept { return stats_; }
+    /**
+     * @brief Latest known request budget of the account.
+     *
+     * `requestsUsed` is the venue's figure from the last `userRateLimit` refresh plus the entries
+     * this client submitted since; `requestsCap` comes from the venue (0 = not fetched yet).
+     */
+    [[nodiscard]] RateLimitStatus rateLimitStatus() const noexcept;
     /// Signature counters by path (precomputed nonce vs deterministic fallback).
     [[nodiscard]] Signer::SigningStats signingStats() const noexcept { return signer_->signingStats(); }
 
@@ -225,6 +315,7 @@ private:
         ActionKind kind{ActionKind::Other};
         std::vector<Cloid> cloids{};  ///< aligned with the action's entries; Cloid{} = untracked
         std::vector<std::pair<Decimal, Decimal>> modifyTargets{};  ///< (px, sz) per modify entry
+        std::optional<TriggerSpec> modifyTrigger{};                ///< new trigger, when the caller changed it
         ActionCallback callback{};
         EventLoop::TimerId timer{0};
         bool viaWebSocket{false};
@@ -236,8 +327,15 @@ private:
         Int128 fillNotional{0};
         Decimal ackFilledSz{};
         Decimal ackAvgPx{};
-        std::vector<std::uint64_t> retiredOids{};
+        std::vector<std::uint64_t> retiredOids{};  ///< bounded: only the most recent amendments matter
         bool canceledDuringModify{false};
+
+        void retireOid(std::uint64_t oid) {
+            retiredOids.push_back(oid);
+            if (retiredOids.size() > 4) {
+                retiredOids.erase(retiredOids.begin());
+            }
+        }
     };
 
     // WsSessionListener
@@ -248,10 +346,14 @@ private:
     void onOrderUpdates(std::span<const OrderUpdateMsg> updates) override;
     void onUserFills(const UserFillsMsg& msg) override;
     void onPostResponse(const PostResponseMsg& msg) override;
+    void onLiquidation(const LiquidationMsg& msg) override;
+    void onNonUserCancels(std::span<const NonUserCancelMsg> cancels) override;
+    void onUserFundings(std::span<const UserFundingMsg> fundings) override;
     void onSubscriptionResponse(const SubscriptionResponseMsg& msg) override;
     void onVenueError(std::string_view text) override;
 
     void bootstrap();
+    void adoptOpenOrders();
     void resubscribeUser();
     void maybeReady();
     Error checkReady() const;
@@ -271,6 +373,8 @@ private:
     Tracked* findByOid(std::uint64_t oid) noexcept;
     Tracked& track(const Cloid& cloid);
     void armEviction();
+    void armRateLimitRefresh();
+    void countRateLimitUnits(const PendingAction& pending);
 
     EventLoop& loop_;
     ExchangeListener& listener_;
@@ -280,7 +384,7 @@ private:
     Address account_{};
     Address user_{};  ///< vault if set, else account — owner of orders / fills
     RequestBuilder builder_;
-    NonceGenerator nonces_;
+    std::shared_ptr<NonceGenerator> nonces_;
     InfoClient info_;
     HttpClient exchangeHttp_;
     WsSession session_;
@@ -289,10 +393,16 @@ private:
 
     std::unordered_map<Cloid, Tracked, CloidHash> orders_;
     std::unordered_map<std::uint64_t, Cloid> oidIndex_;
-    std::unordered_map<std::string, Decimal> positions_;
+    struct PositionState {
+        Decimal size{};
+        std::int64_t lastFillMs{0};  ///< venue time of the newest fill applied to this coin
+    };
+    std::unordered_map<std::string, PositionState> positions_;
     std::unordered_set<std::uint64_t> seenTids_;
     std::deque<std::uint64_t> seenTidOrder_;
     std::unordered_map<std::uint64_t, PendingAction> pending_;
+    /// WebSocket `info` requests awaiting a response, keyed by request id.
+    std::unordered_map<std::uint64_t, std::function<void(const Result<std::string>&)>> pendingInfo_;
     std::uint64_t nextRequestId_{1};
     std::uint64_t cloidSession_{0};
     std::uint64_t cloidCounter_{0};
@@ -300,12 +410,17 @@ private:
     bool started_{false};
     bool assetsLoaded_{false};
     bool positionsLoaded_{false};
+    bool spotBalancesLoaded_{false};
     bool orderUpdatesAcked_{false};
     bool userFillsAcked_{false};
     bool ready_{false};
     bool wasReadyBefore_{false};
     bool fillsSnapshotSeen_{false};
     EventLoop::TimerId evictionTimer_{0};
+    EventLoop::TimerId rateLimitTimer_{0};
+    RateLimitStatus rateLimit_{};
+    std::uint64_t unitsAtLastRefresh_{0};
+    bool rateLimitWarned_{false};
     Stats stats_{};
     std::shared_ptr<int> lifetime_{std::make_shared<int>(0)};  ///< guards deferred retries
 };

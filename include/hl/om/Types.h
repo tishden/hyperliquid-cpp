@@ -85,6 +85,82 @@ struct AccountState {
     std::int64_t timeMs{};
 };
 
+/// One spot token balance (`spotClearinghouseState`).
+struct SpotBalance {
+    std::string coin{};      ///< token name, e.g. "USDC", "PURR"
+    std::uint32_t token{};   ///< token index
+    Decimal total{};         ///< total balance
+    Decimal hold{};          ///< amount reserved by resting orders
+    Decimal entryNtl{};      ///< notional at entry
+};
+
+/// Account rate-limit status (`userRateLimit`): HL grants request budget for traded volume.
+struct RateLimitStatus {
+    Decimal cumVlm{};                ///< cumulative traded volume in USDC
+    std::uint64_t requestsUsed{0};
+    std::uint64_t requestsCap{0};    ///< 10 000 + 1 per USDC of volume
+    [[nodiscard]] std::uint64_t remaining() const noexcept {
+        return requestsCap > requestsUsed ? requestsCap - requestsUsed : 0;
+    }
+};
+
+/// One OHLCV candle (`candleSnapshot` / `candle` subscription).
+struct Candle {
+    std::string coin{};
+    std::string interval{};     ///< "1m", "15m", "1h", "1d", …
+    std::int64_t openTimeMs{};
+    std::int64_t closeTimeMs{};
+    Decimal open{}, close{}, high{}, low{};
+    Decimal volume{};           ///< base-asset volume
+    std::uint64_t trades{0};
+};
+
+/// One historical funding rate of a coin (`fundingHistory`).
+struct FundingRate {
+    std::string coin{};
+    Decimal rate{};             ///< hourly rate
+    Decimal premium{};
+    std::int64_t timeMs{};
+};
+
+/// Funding rate predicted by another venue for the same coin (`predictedFundings`).
+struct PredictedFunding {
+    std::string coin{};
+    std::string venue{};        ///< "HlPerp", "BinPerp", "BybitPerp", …
+    Decimal rate{};
+    std::int64_t nextFundingTimeMs{};
+    int intervalHours{0};
+};
+
+/// Funding actually paid or received by the account (`userFunding`).
+struct FundingPayment {
+    std::int64_t timeMs{};
+    std::string coin{};
+    Decimal usdc{};             ///< negative = paid
+    Decimal szi{};              ///< signed position at the time
+    Decimal rate{};
+    std::string hash{};
+};
+
+/// Market state of one perp (`metaAndAssetCtxs`), metadata and context joined.
+struct PerpContext {
+    std::string coin{};
+    std::uint32_t asset{};
+    int szDecimals{};
+    std::uint32_t maxLeverage{};
+    Decimal funding{};          ///< current hourly funding rate
+    Decimal openInterest{};
+    Decimal premium{};
+    Decimal oraclePx{};
+    Decimal markPx{};
+    Decimal midPx{};
+    Decimal prevDayPx{};
+    Decimal dayNtlVlm{};        ///< 24 h notional volume
+    Decimal dayBaseVlm{};
+    Decimal impactBid{};        ///< impact prices used for the premium
+    Decimal impactAsk{};
+};
+
 /// Result of a `userRole` query: how the venue classifies an address.
 struct UserRole {
     /// "user", "agent", "vault", "subAccount", "missing", …

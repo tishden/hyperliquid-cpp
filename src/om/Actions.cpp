@@ -34,6 +34,12 @@ void appendHex32(std::string& s, const Hash256& h) {
     }
 }
 
+void appendAddress(std::string& s, const Address& a) {
+    s += '"';
+    s += toHex(a);
+    s += '"';
+}
+
 std::string_view tpslWire(TriggerSpec::Kind k) noexcept { return k == TriggerSpec::Kind::TakeProfit ? "tp" : "sl"; }
 
 // Order wire key order (reference SDK order_request_to_order_wire): a b p s r t [c]
@@ -108,10 +114,13 @@ void jsonOrder(std::string& j, const OrderWire& o) {
 
 namespace actions {
 
-EncodedAction order(std::span<const OrderWire> orders, std::string_view grouping) {
+EncodedAction order(std::span<const OrderWire> orders, OrderGrouping grouping,
+                    const std::optional<BuilderFee>& builder) {
+    const auto* priority = std::get_if<PriorityRate>(&grouping);
+    const std::string_view groupingText = priority != nullptr ? "" : groupingWire(std::get<Grouping>(grouping));
     EncodedAction out;
     MsgPackWriter w;
-    w.mapHeader(3);
+    w.mapHeader(builder ? 4 : 3);
     w.str("type");
     w.str("order");
     w.str("orders");
@@ -120,7 +129,21 @@ EncodedAction order(std::span<const OrderWire> orders, std::string_view grouping
         packOrder(w, o);
     }
     w.str("grouping");
-    w.str(grouping);
+    if (priority != nullptr) {
+        w.mapHeader(1);
+        w.str("p");
+        w.uint(priority->rate);
+    } else {
+        w.str(groupingText);
+    }
+    if (builder) {
+        w.str("builder");
+        w.mapHeader(2);
+        w.str("b");
+        w.str(toHex(builder->address));
+        w.str("f");
+        w.uint(builder->feeTenthsOfBps);
+    }
     out.msgpack = w.release();
 
     out.json.reserve(64 + orders.size() * 120);
@@ -131,16 +154,31 @@ EncodedAction order(std::span<const OrderWire> orders, std::string_view grouping
         }
         jsonOrder(out.json, orders[i]);
     }
-    out.json += R"(],"grouping":")";
-    out.json += grouping;
-    out.json += R"("})";
+    out.json += R"(],"grouping":)";
+    if (priority != nullptr) {
+        out.json += R"({"p":)";
+        appendUint(out.json, priority->rate);
+        out.json += '}';
+    } else {
+        out.json += '"';
+        out.json += groupingText;
+        out.json += '"';
+    }
+    if (builder) {
+        out.json += R"(,"builder":{"b":)";
+        appendAddress(out.json, builder->address);
+        out.json += R"(,"f":)";
+        appendUint(out.json, builder->feeTenthsOfBps);
+        out.json += '}';
+    }
+    out.json += '}';
     return out;
 }
 
-EncodedAction cancel(std::span<const CancelWire> cancels) {
+EncodedAction cancel(std::span<const CancelWire> cancels, bool fast) {
     EncodedAction out;
     MsgPackWriter w;
-    w.mapHeader(2);
+    w.mapHeader(fast ? 3 : 2);
     w.str("type");
     w.str("cancel");
     w.str("cancels");
@@ -162,15 +200,21 @@ EncodedAction cancel(std::span<const CancelWire> cancels) {
         appendUint(out.json, c.oid);
         out.json += '}';
     }
-    out.json += "]}";
+    out.json += ']';
+    if (fast) {
+        w.str("f");
+        w.boolean(true);
+        out.json += R"(,"f":true)";
+    }
+    out.json += '}';
     out.msgpack = w.release();
     return out;
 }
 
-EncodedAction cancelByCloid(std::span<const CancelByCloidWire> cancels) {
+EncodedAction cancelByCloid(std::span<const CancelByCloidWire> cancels, bool fast) {
     EncodedAction out;
     MsgPackWriter w;
-    w.mapHeader(2);
+    w.mapHeader(fast ? 3 : 2);
     w.str("type");
     w.str("cancelByCloid");
     w.str("cancels");
@@ -193,7 +237,13 @@ EncodedAction cancelByCloid(std::span<const CancelByCloidWire> cancels) {
         out.json += cloid;
         out.json += R"("})";
     }
-    out.json += "]}";
+    out.json += ']';
+    if (fast) {
+        w.str("f");
+        w.boolean(true);
+        out.json += R"(,"f":true)";
+    }
+    out.json += '}';
     out.msgpack = w.release();
     return out;
 }
@@ -277,7 +327,73 @@ EncodedAction updateLeverage(std::uint32_t asset, bool isCross, std::uint32_t le
     return out;
 }
 
+Result<EncodedAction> updateIsolatedMargin(std::uint32_t asset, Decimal usdc) {
+    // The venue takes the amount as an integer number of micro-USDC; Decimal carries 8 decimals.
+    if (usdc.raw() % 100 != 0) {
+        return Error{Error::Kind::Rejected, 0, "updateIsolatedMargin: " + usdc.toString() + " is finer than 1e-6 USDC"};
+    }
+    const std::int64_t micro = usdc.raw() / 100;
+    EncodedAction out;
+    MsgPackWriter w;
+    w.mapHeader(4);
+    w.str("type");
+    w.str("updateIsolatedMargin");
+    w.str("asset");
+    w.uint(asset);
+    w.str("isBuy");
+    w.boolean(true);  // constant in the venue's wire format; the sign of `ntli` adds or removes margin
+    w.str("ntli");
+    w.sint(micro);
+    out.msgpack = w.release();
+    out.json = R"({"type":"updateIsolatedMargin","asset":)";
+    appendUint(out.json, asset);
+    out.json += R"(,"isBuy":true,"ntli":)";
+    if (micro < 0) {
+        out.json += '-';
+        appendUint(out.json, static_cast<std::uint64_t>(-(micro + 1)) + 1U);
+    } else {
+        appendUint(out.json, static_cast<std::uint64_t>(micro));
+    }
+    out.json += '}';
+    return out;
+}
+
+EncodedAction noop() {
+    EncodedAction out;
+    MsgPackWriter w;
+    w.mapHeader(1);
+    w.str("type");
+    w.str("noop");
+    out.msgpack = w.release();
+    out.json = R"({"type":"noop"})";
+    return out;
+}
+
+EncodedAction reserveRequestWeight(std::uint64_t weight) {
+    EncodedAction out;
+    MsgPackWriter w;
+    w.mapHeader(2);
+    w.str("type");
+    w.str("reserveRequestWeight");
+    w.str("weight");
+    w.uint(weight);
+    out.msgpack = w.release();
+    out.json = R"({"type":"reserveRequestWeight","weight":)";
+    appendUint(out.json, weight);
+    out.json += '}';
+    return out;
+}
+
 }  // namespace actions
+
+std::string_view groupingWire(Grouping grouping) noexcept {
+    switch (grouping) {
+        case Grouping::Na: return "na";
+        case Grouping::NormalTpsl: return "normalTpsl";
+        case Grouping::PositionTpsl: return "positionTpsl";
+    }
+    return "na";
+}
 
 std::uint64_t NonceGenerator::next() noexcept {
     const auto now = static_cast<std::uint64_t>(

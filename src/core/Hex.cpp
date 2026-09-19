@@ -46,6 +46,20 @@ std::string_view wsUrl(Network network) noexcept {
     return network == Network::Mainnet ? "wss://api.hyperliquid.xyz/ws" : "wss://api.hyperliquid-testnet.xyz/ws";
 }
 
+bool isValidCoinName(std::string_view coin) noexcept {
+    if (coin.empty() || coin.size() > 64) {
+        return false;
+    }
+    for (const char c : coin) {
+        const bool allowed = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '/' ||
+                             c == '@' || c == '-' || c == '_' || c == '.' || c == ':';
+        if (!allowed) {
+            return false;
+        }
+    }
+    return true;
+}
+
 std::string_view toString(Side side) noexcept { return side == Side::Buy ? "Buy" : "Sell"; }
 
 std::string_view toString(Tif tif) noexcept {

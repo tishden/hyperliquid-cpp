@@ -114,9 +114,26 @@ std::string Decimal::toString() const {
     return s;
 }
 
+namespace {
+
+/// Clamp a 128-bit intermediate into the int64 mantissa range instead of wrapping.
+std::int64_t saturate(Int128 value) noexcept {
+    constexpr Int128 kMax = std::numeric_limits<std::int64_t>::max();
+    constexpr Int128 kMin = std::numeric_limits<std::int64_t>::min();
+    if (value > kMax) {
+        return std::numeric_limits<std::int64_t>::max();
+    }
+    if (value < kMin) {
+        return std::numeric_limits<std::int64_t>::min();
+    }
+    return static_cast<std::int64_t>(value);
+}
+
+}  // namespace
+
 Decimal Decimal::mul(Decimal o) const noexcept {
     const Int128 product = static_cast<Int128>(raw_) * o.raw_;
-    return Decimal{static_cast<std::int64_t>(product / kScale)};
+    return Decimal{saturate(product / kScale)};
 }
 
 Decimal Decimal::div(Decimal o) const noexcept {
@@ -124,7 +141,7 @@ Decimal Decimal::div(Decimal o) const noexcept {
         return Decimal{};
     }
     const Int128 scaled = static_cast<Int128>(raw_) * kScale;
-    return Decimal{static_cast<std::int64_t>(scaled / o.raw_)};
+    return Decimal{saturate(scaled / o.raw_)};
 }
 
 std::ostream& operator<<(std::ostream& os, Decimal value) { return os << value.toString(); }

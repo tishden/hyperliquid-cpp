@@ -80,7 +80,7 @@ build/release/examples/hl_live_check --key-file secrets/testnet.env --coin ETH -
 build/release/examples/hl_live_check --key-file secrets/testnet.env --coin ETH --flatten
 ```
 
-All quoter options are listed by `--help` and in [TESTNET.md](TESTNET.md#4-run-the-demo); account setup is
+All quoter options are listed by `--help` and in [TESTNET.md](TESTNET.md#5-run-the-demo); account setup is
 described there as well. The quoter enables the precomputed-nonce signer by default (`--presign 256`).
 
 ## 4. Docker
@@ -157,6 +157,12 @@ loop.run();
 | Setting | Recommendation |
 |---|---|
 | `ExchangeConfig::precomputedNonces` | 256–1024 for quoting; 0 if you need deterministic (reproducible) signatures |
+| `ExchangeConfig::fastCancels` | leave on; the venue plans to prioritise flagged cancels in the mempool |
+| `ExchangeConfig::actionExpiryMs` | 2 000–10 000 ms while quoting, so a stalled action cannot arrive late |
+| `ExchangeConfig::adoptExistingOrders` | leave on, so a restart sees what the previous process left resting |
+| `ExchangeConfig::subscribeUserEvents` | leave on: liquidations arrive in no other stream |
+| `ExchangeConfig::nonces` | share one generator between clients that sign with the same key |
+| `ExchangeConfig::rateLimitRefreshMs` | 30–60 s while quoting |
 | `ExchangeConfig::transport` | `WebSocket` (one connection for posts, order updates and fills) |
 | `ExchangeConfig::requestTimeoutMs` | 3–10 s; shorter means faster reconciliation of lost actions |
 | `WsSessionOptions::pingIntervalMs` / `staleTimeoutMs` | 20 s / 60 s (HL closes idle sockets after 60 s) |
@@ -236,6 +242,9 @@ journalctl -u hl-quoter -f
 | `OrderBook::timeMs()` | exchange time of last update | older than a few seconds while connected |
 | `ExchangeClient::stats()` | `actionsSent`, `actionsViaHttp`, `actionErrors`, `timeouts`, `fills`, `reconciles` | `timeouts`/`reconciles` grow; `actionsViaHttp` grows with WS transport (socket flapping) |
 | `ExchangeClient::signingStats()` | `precomputed`, `deterministic` | `deterministic` grows with the pool enabled (pool too small) |
+| `ExchangeClient::rateLimitStatus()` | the venue's `requestsUsed`/`requestsCap` plus local submissions | less than ~20 % of the budget remains (running out throttles the account to one request per 10 s) |
+| `ExchangeClient::stats().rateLimitHits` | HTTP 429 responses | any sustained growth |
+| `ExchangeClient::stats().addressUnitsUsed` | order/cancel entries submitted | compare with traded volume: the budget grows by 1 per USDC |
 | `ExchangeClient::isReady()` | readiness | false for longer than the reconnect backoff |
 
 ## 10. Shutdown and restarts
@@ -261,7 +270,8 @@ removed by the venue automatically.
 - [ ] Tested on testnet with the same binary and configuration
 - [ ] `scheduleCancel` dead-man's switch refreshed by the strategy
 - [ ] Position and loss limits enforced in the strategy (the connector does not impose risk limits)
-- [ ] Rate limits respected: order volume budget, ≤ 40 orders per batch, WebSocket ≤ 2 000 messages/min
+- [ ] Rate limits watched: `rateLimitStatus()` monitored; cancel batches are split at 40 entries automatically; WebSocket ≤ 2 000 messages/min
+- [ ] Liquidation handling wired (`ExchangeListener::onLiquidation`)
 - [ ] Counters from §9 monitored and alerted
 - [ ] Clean shutdown path cancels orders (SIGTERM tested)
 - [ ] CA bundle available (`SSL_CERT_FILE`) on minimal hosts

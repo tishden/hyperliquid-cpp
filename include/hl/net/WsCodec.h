@@ -48,7 +48,13 @@ public:
 
     enum class Status : std::uint8_t { Ok, ProtocolError, MessageTooBig };
 
-    /// Consume bytes. Stops early and returns an error status on a protocol violation.
+    /**
+     * @brief Consume bytes; complete messages are delivered to @p sink.
+     *
+     * Re-entrant-safe: if a sink callback feeds more bytes (for example by running the event loop),
+     * those bytes are staged and decoded by the outer call, so the payload view handed to the
+     * callback stays valid.
+     */
     Status feed(const char* data, std::size_t len, WsFrameSink& sink);
 
     void reset() noexcept;
@@ -59,6 +65,8 @@ private:
     std::string fragments_;
     WsOpcode fragmentOpcode_{WsOpcode::Text};
     bool inFragmentedMessage_{false};
+    bool decoding_{false};
+    std::vector<char> staging_;  // bytes fed from inside a callback
     std::uint64_t epoch_{0};
     std::size_t maxMessage_;
 };

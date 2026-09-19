@@ -88,6 +88,11 @@ HttpResponseParser::Status HttpResponseParser::parseHead() {
                 haveLength = true;
             } else if (iequalsPrefix(line, "transfer-encoding:")) {
                 chunked = containsTokenCi(value, "chunked");
+            } else if (iequalsPrefix(line, "retry-after:")) {
+                std::uint64_t seconds = 0;
+                if (std::from_chars(value.data(), value.data() + value.size(), seconds).ec == std::errc{}) {
+                    response_.retryAfterSeconds = static_cast<int>(seconds);
+                }
             } else if (iequalsPrefix(line, "connection:")) {
                 if (containsTokenCi(value, "close")) {
                     response_.keepAlive = false;

@@ -6,7 +6,7 @@
 - [4. Acceptance check](#4-acceptance-check)
 - [5. Run the demo](#5-run-the-demo)
 - [6. Reading the output](#6-reading-the-output)
-- [7. Verifying signing without funds](#verifying-signing-without-funds)
+- [7. Verifying signing without funds](#7-verifying-signing-without-funds)
 - [8. Troubleshooting](#8-troubleshooting)
 - [9. Going to mainnet](#9-going-to-mainnet)
 
@@ -116,7 +116,7 @@ hyperliquid-cpp 1.2.0 — live acceptance check on testnet (ETH, WebSocket trans
   actions 13 (0 via HTTP), errors 2, timeouts 0, reconciles 1
   signatures 13 precomputed-nonce / 0 deterministic
   order updates 28, fills 2, md messages 12 (parse errors 0)
-  0 of 16 steps failed
+  0 of 17 steps failed
 ```
 
 The two "errors" are the expected `scheduleCancel` refusals: Hyperliquid enables the dead-man's switch only

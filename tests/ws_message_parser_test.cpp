@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <optional>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -37,6 +39,13 @@ struct Recorder : hl::WsMessageHandler {
     int pongs{0};
     std::vector<std::string> errors;
     std::vector<std::string> unhandled;
+    std::vector<hl::CandleMsg> candles;
+    std::vector<std::string> candleCoins;
+    std::optional<hl::LiquidationMsg> liquidation;
+    std::vector<hl::NonUserCancelMsg> nonUserCancels;
+    std::vector<hl::UserFundingMsg> fundings;
+    std::optional<hl::ActiveAssetDataMsg> activeAssetData;
+    std::string notification;
 
     void onL2Book(const hl::L2BookMsg& m) override {
         books.push_back({std::string{m.coin}, m.timeMs, {m.bids.begin(), m.bids.end()}, {m.asks.begin(), m.asks.end()}});
@@ -80,6 +89,17 @@ struct Recorder : hl::WsMessageHandler {
     void onPong() override { ++pongs; }
     void onVenueError(std::string_view t) override { errors.emplace_back(t); }
     void onUnhandled(std::string_view channel, std::string_view) override { unhandled.emplace_back(channel); }
+    void onCandle(const hl::CandleMsg& m) override {
+        candles.push_back(m);
+        candleCoins.emplace_back(m.coin);
+    }
+    void onLiquidation(const hl::LiquidationMsg& m) override { liquidation = m; }
+    void onNonUserCancels(std::span<const hl::NonUserCancelMsg> c) override {
+        nonUserCancels.assign(c.begin(), c.end());
+    }
+    void onUserFundings(std::span<const hl::UserFundingMsg> f) override { fundings.assign(f.begin(), f.end()); }
+    void onActiveAssetData(const hl::ActiveAssetDataMsg& m) override { activeAssetData = m; }
+    void onNotification(const hl::NotificationMsg& m) override { notification = std::string{m.text}; }
 };
 
 }  // namespace
@@ -165,14 +185,14 @@ TEST(WsMessageParser, ControlChannels) {
     ASSERT_TRUE(p.parse(hltest::fixture("subscription_response.json"), r));
     ASSERT_TRUE(p.parse(hltest::fixture("pong.json"), r));
     ASSERT_TRUE(p.parse(R"({"channel":"error","data":"Invalid subscription"})", r));
-    ASSERT_TRUE(p.parse(R"({"channel":"candle","data":{"t":1}})", r));
+    ASSERT_TRUE(p.parse(R"({"channel":"webData2","data":{"t":1}})", r));
     ASSERT_EQ(r.subs.size(), 1U);
     EXPECT_EQ(r.subs[0], "subscribe:l2Book:BTC");
     EXPECT_EQ(r.pongs, 1);
     ASSERT_EQ(r.errors.size(), 1U);
     EXPECT_EQ(r.errors[0], "Invalid subscription");
     ASSERT_EQ(r.unhandled.size(), 1U);
-    EXPECT_EQ(r.unhandled[0], "candle");
+    EXPECT_EQ(r.unhandled[0], "webData2");
     EXPECT_EQ(p.stats().unhandled, 1U);
 }
 
@@ -287,4 +307,140 @@ TEST(WsMessageParser, EntireCapturedSessionParses) {
     EXPECT_FALSE(r.bbos.empty());
     EXPECT_FALSE(r.trades.empty());
     EXPECT_FALSE(r.ctxs.empty());
+}
+
+
+TEST(WsMessageParser, Candle) {
+    hl::WsMessageParser p;
+    Recorder r;
+    ASSERT_TRUE(p.parse(
+        R"({"channel":"candle","data":{"t":1789800000000,"T":1789800059999,"s":"ETH","i":"1m","o":"2629.4",)"
+        R"("c":"2630.2","h":"2630.3","l":"2629.4","v":"59.6145","n":49}})",
+        r));
+    ASSERT_EQ(r.candles.size(), 1U);
+    EXPECT_EQ(r.candleCoins[0], "ETH");
+    EXPECT_EQ(r.candles[0].openTimeMs, 1789800000000LL);
+    EXPECT_EQ(r.candles[0].closeTimeMs, 1789800059999LL);
+    EXPECT_EQ(r.candles[0].open, d("2629.4"));
+    EXPECT_EQ(r.candles[0].close, d("2630.2"));
+    EXPECT_EQ(r.candles[0].high, d("2630.3"));
+    EXPECT_EQ(r.candles[0].low, d("2629.4"));
+    EXPECT_EQ(r.candles[0].volume, d("59.6145"));
+    EXPECT_EQ(r.candles[0].trades, 49U);
+}
+
+// The `userEvents` subscription is delivered on a channel named "user" and carries four
+// different payloads; liquidations and venue-initiated cancels appear nowhere else.
+TEST(WsMessageParser, UserEventsLiquidation) {
+    hl::WsMessageParser p;
+    Recorder r;
+    ASSERT_TRUE(p.parse(
+        R"({"channel":"user","data":{"liquidation":{"lid":42,"liquidator":"0xabc","liquidated_user":"0xdef",)"
+        R"("liquidated_ntl_pos":"1234.5","liquidated_account_value":"-1.25"}}})",
+        r));
+    ASSERT_TRUE(r.liquidation);
+    EXPECT_EQ(r.liquidation->lid, 42U);
+    EXPECT_EQ(r.liquidation->liquidatedNtlPos, d("1234.5"));
+    EXPECT_EQ(r.liquidation->liquidatedAccountValue, d("-1.25"));
+}
+
+TEST(WsMessageParser, UserEventsNonUserCancelAndFunding) {
+    hl::WsMessageParser p;
+    Recorder r;
+    ASSERT_TRUE(p.parse(R"({"channel":"user","data":{"nonUserCancel":[{"coin":"ETH","oid":7},{"coin":"BTC","oid":8}]}})", r));
+    ASSERT_EQ(r.nonUserCancels.size(), 2U);
+    EXPECT_EQ(r.nonUserCancels[0].oid, 7U);
+    EXPECT_EQ(r.nonUserCancels[1].oid, 8U);
+
+    ASSERT_TRUE(p.parse(
+        R"({"channel":"user","data":{"funding":{"time":1789800000000,"coin":"ETH","usdc":"-0.0123","szi":"1.5",)"
+        R"("fundingRate":"0.0000125"}}})",
+        r));
+    ASSERT_EQ(r.fundings.size(), 1U);
+    EXPECT_EQ(r.fundings[0].coin, "ETH");
+    EXPECT_EQ(r.fundings[0].usdc, d("-0.0123"));
+    EXPECT_EQ(r.fundings[0].rate, d("0.0000125"));
+}
+
+TEST(WsMessageParser, UserEventsFillsReuseTheFillParser) {
+    hl::WsMessageParser p;
+    Recorder r;
+    ASSERT_TRUE(p.parse(
+        R"({"channel":"user","data":{"fills":[{"coin":"BTC","px":"75930.0","sz":"0.3","side":"A","time":1789582997706,)"
+        R"("startPosition":"0.3","dir":"Close Long","closedPnl":"-1.5","hash":"0xabc","oid":1,"crossed":true,)"
+        R"("fee":"0.01","tid":2,"feeToken":"USDC"}]}})",
+        r));
+    ASSERT_EQ(r.fills.size(), 1U);
+    EXPECT_FALSE(r.fillsSnapshot);
+    EXPECT_EQ(r.fills[0].side, hl::Side::Sell);
+    EXPECT_EQ(r.fills[0].tid, 2U);
+}
+
+TEST(WsMessageParser, UserFundingsChannel) {
+    hl::WsMessageParser p;
+    Recorder r;
+    ASSERT_TRUE(p.parse(
+        R"({"channel":"userFundings","data":{"isSnapshot":true,"user":"0xabc","fundings":[)"
+        R"({"time":1,"coin":"ETH","usdc":"0.5","szi":"-2","fundingRate":"0.00001"},)"
+        R"({"time":2,"coin":"BTC","usdc":"-1.5","szi":"0.1","fundingRate":"0.00002"}]}})",
+        r));
+    ASSERT_EQ(r.fundings.size(), 2U);
+    EXPECT_EQ(r.fundings[0].usdc, d("0.5"));
+    EXPECT_EQ(r.fundings[1].coin, "BTC");
+}
+
+TEST(WsMessageParser, ActiveAssetDataAndNotification) {
+    hl::WsMessageParser p;
+    Recorder r;
+    ASSERT_TRUE(p.parse(
+        R"({"channel":"activeAssetData","data":{"user":"0xabc","coin":"ETH","leverage":{"type":"isolated","value":7},)"
+        R"("maxTradeSzs":["10.5","11.25"],"availableToTrade":["900.0","910.0"],"markPx":"2640.5"}})",
+        r));
+    ASSERT_TRUE(r.activeAssetData);
+    EXPECT_EQ(r.activeAssetData->coin, "ETH");
+    EXPECT_EQ(r.activeAssetData->leverage, 7U);
+    EXPECT_FALSE(r.activeAssetData->isCross);
+    EXPECT_EQ(r.activeAssetData->maxTradeSzBuy, d("10.5"));
+    EXPECT_EQ(r.activeAssetData->maxTradeSzSell, d("11.25"));
+    EXPECT_EQ(r.activeAssetData->availableToTradeSell, d("910"));
+    EXPECT_EQ(r.activeAssetData->markPx, d("2640.5"));
+
+    ASSERT_TRUE(p.parse(R"({"channel":"notification","data":{"notification":"Your order was canceled"}})", r));
+    EXPECT_EQ(r.notification, "Your order was canceled");
+}
+
+// Every fixture truncated at every length must be rejected cleanly (no crash, counted as an error).
+TEST(WsMessageParser, TruncatedFramesNeverCrash) {
+    hl::WsMessageParser p;
+    Recorder r;
+    std::size_t rejected = 0;
+    std::size_t attempts = 0;
+    for (const char* name : {"l2book_btc.json", "bbo_btc.json", "trades_btc.json", "asset_ctx_btc.json"}) {
+        const std::string frame = hltest::fixture(name);
+        for (std::size_t len = 0; len < frame.size(); ++len) {
+            ++attempts;
+            rejected += p.parse(std::string_view{frame}.substr(0, len), r) ? 0 : 1;
+        }
+    }
+    EXPECT_GT(attempts, 1000U);
+    // simdjson's On-Demand parser is lazy: a truncation that leaves every field the handler touches
+    // intact can still parse. What matters is that nothing crashes and almost everything is caught.
+    EXPECT_GT(rejected, attempts - attempts / 100) << "truncated frames must be rejected";
+    // The parser is still usable afterwards.
+    EXPECT_TRUE(p.parse(hltest::fixture("bbo_btc.json"), r));
+}
+
+// Random byte mutations of a valid frame must be rejected or parsed, never crash.
+TEST(WsMessageParser, MutatedFramesAreHandled) {
+    hl::WsMessageParser p;
+    Recorder r;
+    std::string frame = hltest::fixture("l2book_btc.json");
+    std::mt19937 rng{12345};
+    for (int i = 0; i < 2000; ++i) {
+        std::string mutated = frame;
+        const std::size_t pos = rng() % mutated.size();
+        mutated[pos] = static_cast<char>(rng() % 256);
+        (void)p.parse(mutated, r);  // must not crash; validity is not asserted
+    }
+    EXPECT_TRUE(p.parse(frame, r));
 }

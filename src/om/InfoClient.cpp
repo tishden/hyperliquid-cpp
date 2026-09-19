@@ -303,6 +303,259 @@ void InfoClient::allMids(Callback<std::vector<std::pair<std::string, Decimal>>> 
                    });
 }
 
+void InfoClient::spotBalances(const Address& user, Callback<std::vector<SpotBalance>> callback) {
+    request<std::vector<SpotBalance>>(http_, userRequest("spotClearinghouseState", user), std::move(callback),
+                                      [](const json::Value& root) -> Result<std::vector<SpotBalance>> {
+                                          std::vector<SpotBalance> out;
+                                          for (auto b : root.field("balances").array()) {
+                                              SpotBalance sb;
+                                              sb.coin = std::string{b.field("coin").asString()};
+                                              sb.token = static_cast<std::uint32_t>(b.field("token").asUint());
+                                              sb.total = b.field("total").asDecimal();
+                                              sb.hold = b.field("hold").asDecimal();
+                                              sb.entryNtl = b.field("entryNtl").asDecimal();
+                                              out.push_back(std::move(sb));
+                                          }
+                                          return out;
+                                      });
+}
+
+void InfoClient::rateLimit(const Address& user, Callback<RateLimitStatus> callback) {
+    request<RateLimitStatus>(http_, userRequest("userRateLimit", user), std::move(callback),
+                             [](const json::Value& root) -> Result<RateLimitStatus> {
+                                 if (!root.isObject()) {
+                                     return Error{Error::Kind::Parse, 0, "userRateLimit: unexpected response"};
+                                 }
+                                 RateLimitStatus out;
+                                 out.cumVlm = root.field("cumVlm").asDecimal();
+                                 out.requestsUsed = root.field("nRequestsUsed").asUint();
+                                 out.requestsCap = root.field("nRequestsCap").asUint();
+                                 return out;
+                             });
+}
+
+void InfoClient::userFillsByTime(const Address& user, std::int64_t startTimeMs, std::int64_t endTimeMs,
+                                 Callback<std::vector<Fill>> callback) {
+    std::string body = R"({"type":"userFillsByTime","user":")" + toHex(user) + R"(","startTime":)" +
+                       std::to_string(startTimeMs);
+    if (endTimeMs > 0) {
+        body += R"(,"endTime":)" + std::to_string(endTimeMs);
+    }
+    body += '}';
+    request<std::vector<Fill>>(http_, std::move(body), std::move(callback),
+                               [](const json::Value& root) -> Result<std::vector<Fill>> {
+                                   if (!root.isArray()) {
+                                       return Error{Error::Kind::Parse, 0, "userFillsByTime: expected array"};
+                                   }
+                                   std::vector<Fill> out;
+                                   for (auto f : root.array()) {
+                                       out.push_back(parseFill(f));
+                                   }
+                                   return out;
+                               });
+}
+
+void InfoClient::userFunding(const Address& user, std::int64_t startTimeMs, std::int64_t endTimeMs,
+                             Callback<std::vector<FundingPayment>> callback) {
+    std::string body = R"({"type":"userFunding","user":")" + toHex(user) + R"(","startTime":)" +
+                       std::to_string(startTimeMs);
+    if (endTimeMs > 0) {
+        body += R"(,"endTime":)" + std::to_string(endTimeMs);
+    }
+    body += '}';
+    request<std::vector<FundingPayment>>(http_, std::move(body), std::move(callback),
+                                         [](const json::Value& root) -> Result<std::vector<FundingPayment>> {
+                                             if (!root.isArray()) {
+                                                 return Error{Error::Kind::Parse, 0, "userFunding: expected array"};
+                                             }
+                                             std::vector<FundingPayment> out;
+                                             for (auto e : root.array()) {
+                                                 const auto delta = e.field("delta");
+                                                 FundingPayment p;
+                                                 p.timeMs = e.field("time").asInt();
+                                                 p.hash = std::string{e.field("hash").asString()};
+                                                 p.coin = std::string{delta.field("coin").asString()};
+                                                 p.usdc = delta.field("usdc").asDecimal();
+                                                 p.szi = delta.field("szi").asDecimal();
+                                                 p.rate = delta.field("fundingRate").asDecimal();
+                                                 out.push_back(std::move(p));
+                                             }
+                                             return out;
+                                         });
+}
+
+void InfoClient::historicalOrders(const Address& user, Callback<std::vector<OrderStatusInfo>> callback) {
+    request<std::vector<OrderStatusInfo>>(http_, userRequest("historicalOrders", user), std::move(callback),
+                                          [](const json::Value& root) -> Result<std::vector<OrderStatusInfo>> {
+                                              if (!root.isArray()) {
+                                                  return Error{Error::Kind::Parse, 0, "historicalOrders: expected array"};
+                                              }
+                                              std::vector<OrderStatusInfo> out;
+                                              for (auto e : root.array()) {
+                                                  OrderStatusInfo info;
+                                                  info.found = true;
+                                                  info.order = parseOrder(e.field("order"));
+                                                  info.statusText = std::string{e.field("status").asString()};
+                                                  info.status = parseOrderUpdateStatus(info.statusText);
+                                                  info.statusTimestampMs = e.field("statusTimestamp").asInt();
+                                                  out.push_back(std::move(info));
+                                              }
+                                              return out;
+                                          });
+}
+
+void InfoClient::perpContexts(Callback<std::vector<PerpContext>> callback) {
+    request<std::vector<PerpContext>>(http_, R"({"type":"metaAndAssetCtxs"})", std::move(callback),
+                                      [](const json::Value& root) -> Result<std::vector<PerpContext>> {
+                                          // Response is [ {universe:[…]}, [ctx…] ] — the arrays are parallel.
+                                          if (!root.isArray()) {
+                                              return Error{Error::Kind::Parse, 0, "metaAndAssetCtxs: expected array"};
+                                          }
+                                          std::vector<PerpContext> out;
+                                          std::vector<json::Value> parts;
+                                          for (auto part : root.array()) {
+                                              parts.push_back(part);
+                                          }
+                                          if (parts.size() != 2) {
+                                              return Error{Error::Kind::Parse, 0, "metaAndAssetCtxs: expected two elements"};
+                                          }
+                                          std::vector<json::Value> ctxs;
+                                          for (auto c : parts[1].array()) {
+                                              ctxs.push_back(c);
+                                          }
+                                          std::uint32_t index = 0;
+                                          for (auto u : parts[0].field("universe").array()) {
+                                              PerpContext p;
+                                              p.coin = std::string{u.field("name").asString()};
+                                              p.asset = index;
+                                              p.szDecimals = static_cast<int>(u.field("szDecimals").asInt());
+                                              p.maxLeverage = static_cast<std::uint32_t>(u.field("maxLeverage").asUint());
+                                              if (index < ctxs.size()) {
+                                                  const auto& c = ctxs[index];
+                                                  p.funding = c.field("funding").asDecimal();
+                                                  p.openInterest = c.field("openInterest").asDecimal();
+                                                  p.premium = c.field("premium").asDecimal();
+                                                  p.oraclePx = c.field("oraclePx").asDecimal();
+                                                  p.markPx = c.field("markPx").asDecimal();
+                                                  p.midPx = c.field("midPx").asDecimal();
+                                                  p.prevDayPx = c.field("prevDayPx").asDecimal();
+                                                  p.dayNtlVlm = c.field("dayNtlVlm").asDecimal();
+                                                  p.dayBaseVlm = c.field("dayBaseVlm").asDecimal();
+                                                  std::size_t side = 0;
+                                                  for (auto px : c.field("impactPxs").array()) {
+                                                      (side == 0 ? p.impactBid : p.impactAsk) = px.asDecimal();
+                                                      if (++side == 2) {
+                                                          break;
+                                                      }
+                                                  }
+                                              }
+                                              out.push_back(std::move(p));
+                                              ++index;
+                                          }
+                                          return out;
+                                      });
+}
+
+void InfoClient::fundingHistory(std::string_view coin, std::int64_t startTimeMs, std::int64_t endTimeMs,
+                                Callback<std::vector<FundingRate>> callback) {
+    std::string body = R"({"type":"fundingHistory","coin":")" + std::string{coin} + R"(","startTime":)" +
+                       std::to_string(startTimeMs);
+    if (endTimeMs > 0) {
+        body += R"(,"endTime":)" + std::to_string(endTimeMs);
+    }
+    body += '}';
+    request<std::vector<FundingRate>>(http_, std::move(body), std::move(callback),
+                                      [](const json::Value& root) -> Result<std::vector<FundingRate>> {
+                                          if (!root.isArray()) {
+                                              return Error{Error::Kind::Parse, 0, "fundingHistory: expected array"};
+                                          }
+                                          std::vector<FundingRate> out;
+                                          for (auto e : root.array()) {
+                                              FundingRate f;
+                                              f.coin = std::string{e.field("coin").asString()};
+                                              f.rate = e.field("fundingRate").asDecimal();
+                                              f.premium = e.field("premium").asDecimal();
+                                              f.timeMs = e.field("time").asInt();
+                                              out.push_back(std::move(f));
+                                          }
+                                          return out;
+                                      });
+}
+
+void InfoClient::predictedFundings(Callback<std::vector<PredictedFunding>> callback) {
+    request<std::vector<PredictedFunding>>(
+        http_, R"({"type":"predictedFundings"})", std::move(callback),
+        [](const json::Value& root) -> Result<std::vector<PredictedFunding>> {
+            // [[coin, [[venue, {fundingRate, nextFundingTime, fundingIntervalHours}], …]], …]
+            if (!root.isArray()) {
+                return Error{Error::Kind::Parse, 0, "predictedFundings: expected array"};
+            }
+            std::vector<PredictedFunding> out;
+            for (auto entry : root.array()) {
+                std::string coin;
+                std::size_t position = 0;
+                for (auto part : entry.array()) {
+                    if (position == 0) {
+                        coin = std::string{part.asString()};
+                    } else {
+                        for (auto venueEntry : part.array()) {
+                            PredictedFunding pf;
+                            pf.coin = coin;
+                            std::size_t inner = 0;
+                            for (auto field : venueEntry.array()) {
+                                if (inner == 0) {
+                                    pf.venue = std::string{field.asString()};
+                                } else {
+                                    pf.rate = field.field("fundingRate").asDecimal();
+                                    pf.nextFundingTimeMs = field.field("nextFundingTime").asInt();
+                                    pf.intervalHours = static_cast<int>(field.field("fundingIntervalHours").asInt());
+                                }
+                                ++inner;
+                            }
+                            if (!pf.venue.empty()) {
+                                out.push_back(std::move(pf));
+                            }
+                        }
+                    }
+                    ++position;
+                }
+            }
+            return out;
+        });
+}
+
+void InfoClient::candles(std::string_view coin, std::string_view interval, std::int64_t startTimeMs,
+                         std::int64_t endTimeMs, Callback<std::vector<Candle>> callback) {
+    std::string body = R"({"type":"candleSnapshot","req":{"coin":")" + std::string{coin} + R"(","interval":")" +
+                       std::string{interval} + R"(","startTime":)" + std::to_string(startTimeMs);
+    if (endTimeMs > 0) {
+        body += R"(,"endTime":)" + std::to_string(endTimeMs);
+    }
+    body += "}}";
+    request<std::vector<Candle>>(http_, std::move(body), std::move(callback),
+                                 [](const json::Value& root) -> Result<std::vector<Candle>> {
+                                     if (!root.isArray()) {
+                                         return Error{Error::Kind::Parse, 0, "candleSnapshot: expected array"};
+                                     }
+                                     std::vector<Candle> out;
+                                     for (auto e : root.array()) {
+                                         Candle c;
+                                         c.openTimeMs = e.field("t").asInt();
+                                         c.closeTimeMs = e.field("T").asInt();
+                                         c.coin = std::string{e.field("s").asString()};
+                                         c.interval = std::string{e.field("i").asString()};
+                                         c.open = e.field("o").asDecimal();
+                                         c.close = e.field("c").asDecimal();
+                                         c.high = e.field("h").asDecimal();
+                                         c.low = e.field("l").asDecimal();
+                                         c.volume = e.field("v").asDecimal();
+                                         c.trades = e.field("n").asUint();
+                                         out.push_back(std::move(c));
+                                     }
+                                     return out;
+                                 });
+}
+
 void InfoClient::raw(std::string requestJson, Callback<std::string> callback) {
     http_.postJson(kInfoPath, std::move(requestJson),
                    [callback = std::move(callback)](const Error& err, const HttpResponse& resp) {

@@ -21,6 +21,8 @@ struct HttpClientOptions {
     std::int64_t requestTimeoutMs{10'000};
     /// Close the idle keep-alive connection after this long (HL's edge drops idle connections).
     std::int64_t idleTimeoutMs{50'000};
+    /// Pause the queue for this long after a 429 without a `Retry-After` header.
+    std::int64_t defaultRateLimitPauseMs{1'000};
 };
 
 /**
@@ -52,6 +54,10 @@ public:
 
     /// Queued + in-flight requests.
     [[nodiscard]] std::size_t pending() const noexcept { return queue_.size(); }
+    /// Number of 429 responses seen (the queue is paused for `Retry-After` after each).
+    [[nodiscard]] std::uint64_t rateLimitHits() const noexcept { return rateLimitHits_; }
+    /// Monotonic time until which sending is paused after a 429 (0 = not paused).
+    [[nodiscard]] std::int64_t pausedUntilMs() const noexcept { return pausedUntilMs_; }
     [[nodiscard]] const std::string& baseUrl() const noexcept { return baseUrl_; }
 
 private:
@@ -59,11 +65,13 @@ private:
         std::string wire;
         Callback callback;
         bool written{false};
-        std::uint8_t attempts{0};
+        std::uint8_t connectAttempts{0};  ///< connection attempts made for this request
     };
 
     void onTlsConnected() override;
     void onTlsData(const char* data, std::size_t len) override;
+    /// Decode one chunk of response bytes; completing a request invokes its callback.
+    void processBytes(const char* data, std::size_t len);
     void onTlsClosed(std::string_view reason) override;
 
     void pump();
@@ -79,6 +87,11 @@ private:
     HttpResponseParser parser_;
     std::deque<Request> queue_;
     bool connecting_{false};
+    bool dispatching_{false};   ///< inside a response callback
+    std::string staged_;        ///< bytes that arrived while a callback was running
+    std::uint64_t rateLimitHits_{0};
+    std::int64_t pausedUntilMs_{0};
+    EventLoop::TimerId pauseTimer_{0};
     EventLoop::TimerId requestTimer_{0};
     EventLoop::TimerId idleTimer_{0};
 };

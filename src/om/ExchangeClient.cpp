@@ -12,6 +12,9 @@ namespace hl {
 namespace {
 
 constexpr std::size_t kMaxRememberedTids = 20'000;
+// Hyperliquid charges one rate-limit unit per batch of up to 40 entries, so cancel batches are cut
+// at that size instead of sending one huge action.
+constexpr std::size_t kMaxBatchEntries = 40;
 constexpr std::int64_t kEvictionPeriodMs = 10'000;
 constexpr std::uint64_t kExternalCloidHigh = ~0ULL;
 
@@ -69,6 +72,7 @@ ExchangeClient::ExchangeClient(EventLoop& loop, ExchangeListener& listener, Exch
       signer_(makeSigner(config_)),
       vault_(parseOptionalAddress(config_.vaultAddress, "vaultAddress")),
       builder_(*signer_, config_.network, vault_),
+      nonces_(config_.nonces ? config_.nonces : std::make_shared<NonceGenerator>()),
       info_(loop, restBase(config_), config_.http),
       exchangeHttp_(loop, restBase(config_), config_.http),
       session_(loop, *this, sessionOptions(config_)) {
@@ -103,8 +107,14 @@ void ExchangeClient::start() {
     const std::string user = toHex(user_);
     session_.subscribe(R"({"type":"orderUpdates","user":")" + user + R"("})");
     session_.subscribe(R"({"type":"userFills","user":")" + user + R"("})");
+    if (config_.subscribeUserEvents) {
+        session_.subscribe(R"({"type":"userEvents","user":")" + user + R"("})");
+    }
     session_.start();
     armEviction();
+    if (config_.rateLimitRefreshMs > 0) {
+        armRateLimitRefresh();
+    }
 }
 
 void ExchangeClient::stop() {
@@ -118,12 +128,17 @@ void ExchangeClient::stop() {
         loop_.cancelTimer(evictionTimer_);
         evictionTimer_ = 0;
     }
+    if (rateLimitTimer_ != 0) {
+        loop_.cancelTimer(rateLimitTimer_);
+        rateLimitTimer_ = 0;
+    }
     for (auto& [id, p] : pending_) {
         if (p.timer != 0) {
             loop_.cancelTimer(p.timer);
         }
     }
     pending_.clear();
+    pendingInfo_.clear();
 }
 
 void ExchangeClient::bootstrap() {
@@ -180,6 +195,30 @@ void ExchangeClient::bootstrap() {
                                 "accountAddress " + toHex(user_) + " does not match the agent's master account " +
                                     toHex(master)});
     });
+    if (config_.loadSpotAssets && !spotBalancesLoaded_) {
+        info_.spotBalances(user_, [this](const Result<std::vector<SpotBalance>>& r) {
+            if (!r) {
+                logf(LogLevel::Warn, "exchange: spotClearinghouseState failed (%s); spot positions start empty",
+                     r.error().message.c_str());
+            } else {
+                // Spot positions are tracked per market ("PURR/USDC"); the venue reports balances per
+                // token ("PURR"), so map each pair to the balance of its base token.
+                for (const auto& asset : assets_.all()) {
+                    if (asset.kind != AssetInfo::Kind::Spot || asset.baseToken.empty()) {
+                        continue;
+                    }
+                    for (const auto& balance : r.value()) {
+                        if (balance.coin == asset.baseToken) {
+                            positions_.try_emplace(asset.name, PositionState{balance.total, 0});
+                            break;
+                        }
+                    }
+                }
+            }
+            spotBalancesLoaded_ = true;
+            maybeReady();
+        });
+    }
     if (positionsLoaded_) {
         return;
     }
@@ -189,7 +228,7 @@ void ExchangeClient::bootstrap() {
                  r.error().message.c_str());
         } else {
             for (const auto& p : r.value().positions) {
-                positions_.try_emplace(p.coin, p.szi);
+                positions_.try_emplace(p.coin, PositionState{p.szi, 0});
             }
             logf(LogLevel::Info, "exchange: account value %s USDC, %zu open positions",
                  r.value().accountValue.toString().c_str(), r.value().positions.size());
@@ -199,23 +238,75 @@ void ExchangeClient::bootstrap() {
     });
 }
 
+void ExchangeClient::adoptOpenOrders() {
+    // Orders left resting by a previous process (or placed in the UI) are invisible until they
+    // change; list them once at start-up so liveOrders()/cancelAll() see the true picture.
+    info_.openOrders(user_, [this](const Result<std::vector<OpenOrder>>& r) {
+        if (!r) {
+            logf(LogLevel::Warn, "exchange: could not list existing open orders (%s)", r.error().message.c_str());
+            return;
+        }
+        std::size_t adopted = 0;
+        for (const auto& open : r.value()) {
+            const Cloid cloid = open.cloid.value_or(Cloid{kExternalCloidHigh, open.oid});
+            if (find(cloid) != nullptr || findByOid(open.oid) != nullptr) {
+                continue;
+            }
+            Tracked& t = track(cloid);
+            Order& o = t.order;
+            o.external = !open.cloid.has_value();
+            o.coin = open.coin;
+            if (const AssetInfo* a = assets_.find(open.coin)) {
+                o.asset = a->asset;
+            }
+            o.side = open.side;
+            o.px = open.limitPx;
+            o.origSz = open.origSz;
+            o.filledSz = open.origSz - open.sz;
+            o.reduceOnly = open.reduceOnly;
+            o.isTrigger = open.isTrigger;
+            if (open.isTrigger) {
+                // Reconstruct enough of the trigger that modify() does not turn the order into a
+                // plain limit order. The venue reports the kind only through `orderType`.
+                TriggerSpec trigger;
+                trigger.triggerPx = open.triggerPx;
+                trigger.isMarket = open.orderType.find("Market") != std::string::npos;
+                trigger.kind = open.orderType.find("Take Profit") != std::string::npos
+                                   ? TriggerSpec::Kind::TakeProfit
+                                   : TriggerSpec::Kind::StopLoss;
+                o.trigger = trigger;
+            }
+            o.state = o.filledSz.isZero() ? OrderState::Open : OrderState::PartiallyFilled;
+            o.createdMs = open.timestampMs;
+            setOid(t, open.oid);
+            ++adopted;
+            emit(t);
+        }
+        if (adopted != 0) {
+            logf(LogLevel::Info, "exchange: adopted %zu order(s) already open on the venue", adopted);
+        }
+    });
+}
+
 void ExchangeClient::resubscribeUser() {
     const std::string user = toHex(user_);
-    for (const auto& sub : session_.subscriptions()) {
-        session_.unsubscribe(sub);
-    }
+    session_.clearSubscriptions();
     orderUpdatesAcked_ = false;
     userFillsAcked_ = false;
     ready_ = false;
     session_.subscribe(R"({"type":"orderUpdates","user":")" + user + R"("})");
     session_.subscribe(R"({"type":"userFills","user":")" + user + R"("})");
+    if (config_.subscribeUserEvents) {
+        session_.subscribe(R"({"type":"userEvents","user":")" + user + R"("})");
+    }
     positions_.clear();
     fillsSnapshotSeen_ = false;
     positionsLoaded_ = false;
+    spotBalancesLoaded_ = !config_.loadSpotAssets;
     info_.clearinghouseState(user_, [this](const Result<AccountState>& r) {
         if (r) {
             for (const auto& p : r.value().positions) {
-                positions_.try_emplace(p.coin, p.szi);
+                positions_.try_emplace(p.coin, PositionState{p.szi, 0});
             }
             logf(LogLevel::Info, "exchange: account value %s USDC, %zu open positions",
                  r.value().accountValue.toString().c_str(), r.value().positions.size());
@@ -227,12 +318,14 @@ void ExchangeClient::resubscribeUser() {
 
 void ExchangeClient::maybeReady() {
     if (ready_ || !started_ || !assetsLoaded_ || !positionsLoaded_ || !session_.isOpen() || !orderUpdatesAcked_ ||
-        !userFillsAcked_) {
+        !userFillsAcked_ || (config_.loadSpotAssets && !spotBalancesLoaded_)) {
         return;
     }
     ready_ = true;
     if (wasReadyBefore_) {
         reconcileAll();
+    } else if (config_.adoptExistingOrders) {
+        adoptOpenOrders();
     }
     wasReadyBefore_ = true;
     logf(LogLevel::Info, "exchange: ready");
@@ -272,6 +365,31 @@ void ExchangeClient::onSubscriptionResponse(const SubscriptionResponseMsg& msg) 
     maybeReady();
 }
 
+void ExchangeClient::onLiquidation(const LiquidationMsg& msg) {
+    logf(LogLevel::Error, "exchange: LIQUIDATION lid=%llu notional=%s account value=%s",
+         static_cast<unsigned long long>(msg.lid), msg.liquidatedNtlPos.toString().c_str(),
+         msg.liquidatedAccountValue.toString().c_str());
+    listener_.onLiquidation(msg);
+}
+
+void ExchangeClient::onNonUserCancels(std::span<const NonUserCancelMsg> cancels) {
+    // The venue canceled these orders itself (margin, self-trade prevention, delisting, …).
+    for (const auto& c : cancels) {
+        Tracked* t = findByOid(c.oid);
+        if (t == nullptr) {
+            continue;
+        }
+        applyVenueStatus(*t, OrderUpdateStatus::Canceled, "canceledByVenue", Decimal{}, Decimal{});
+        emit(*t);
+    }
+}
+
+void ExchangeClient::onUserFundings(std::span<const UserFundingMsg> fundings) {
+    for (const auto& f : fundings) {
+        listener_.onFunding(f);
+    }
+}
+
 void ExchangeClient::onVenueError(std::string_view text) {
     logf(LogLevel::Warn, "exchange: venue error frame: %.*s", static_cast<int>(text.size()), text.data());
     listener_.onError(Error{Error::Kind::Venue, 0, std::string{text}});
@@ -290,6 +408,9 @@ Error ExchangeClient::checkReady() const {
 }
 
 Result<OrderWire> ExchangeClient::buildWire(const OrderRequest& req, Cloid cloid) const {
+    if (!isValidCoinName(req.coin)) {
+        return Error{Error::Kind::Rejected, 0, "coin name contains characters that are not valid on this venue"};
+    }
     const AssetInfo* asset = assets_.find(req.coin);
     if (asset == nullptr) {
         return Error{Error::Kind::Rejected, 0, "unknown coin '" + req.coin + "'"};
@@ -333,7 +454,9 @@ Result<Cloid> ExchangeClient::placeOrder(const OrderRequest& request) {
     return r.value().front();
 }
 
-Result<std::vector<Cloid>> ExchangeClient::placeOrders(std::span<const OrderRequest> requests) {
+Result<std::vector<Cloid>> ExchangeClient::placeOrders(std::span<const OrderRequest> requests,
+                                                       OrderGrouping grouping,
+                                                       const std::optional<BuilderFee>& builder) {
     if (Error e = checkReady()) {
         return e;
     }
@@ -367,6 +490,7 @@ Result<std::vector<Cloid>> ExchangeClient::placeOrders(std::span<const OrderRequ
         o.origSz = requests[i].sz;
         o.tif = requests[i].tif;
         o.reduceOnly = requests[i].reduceOnly;
+        o.trigger = requests[i].trigger;
         o.isTrigger = requests[i].trigger.has_value();
         o.state = OrderState::PendingNew;
         o.createdMs = now;
@@ -375,7 +499,7 @@ Result<std::vector<Cloid>> ExchangeClient::placeOrders(std::span<const OrderRequ
     PendingAction pending;
     pending.kind = ActionKind::Order;
     pending.cloids = cloids;
-    send(actions::order(wires), std::move(pending));
+    send(actions::order(wires, grouping, builder ? builder : config_.builderFee), std::move(pending));
     return cloids;
 }
 
@@ -397,16 +521,17 @@ Error ExchangeClient::cancel(const Cloid& cloid) {
     pending.kind = ActionKind::Cancel;
     pending.cloids = {cloid};
     t->order.cancelPending = true;
+    const bool fast = config_.fastCancels && !t->order.isTrigger;
     if (t->order.external) {
         if (t->order.oid == 0) {
             t->order.cancelPending = false;
             return Error{Error::Kind::Rejected, 0, "external order without oid"};
         }
         const CancelWire w{t->order.asset, t->order.oid};
-        send(actions::cancel(std::span<const CancelWire>{&w, 1}), std::move(pending));
+        send(actions::cancel(std::span<const CancelWire>{&w, 1}, fast), std::move(pending));
     } else {
         const CancelByCloidWire w{t->order.asset, cloid};
-        send(actions::cancelByCloid(std::span<const CancelByCloidWire>{&w, 1}), std::move(pending));
+        send(actions::cancelByCloid(std::span<const CancelByCloidWire>{&w, 1}, fast), std::move(pending));
     }
     return {};
 }
@@ -428,6 +553,8 @@ Error ExchangeClient::cancelByOid(std::string_view coin, std::uint64_t oid) {
         pending.cloids = {Cloid{}};
     }
     const CancelWire w{asset->asset, oid};
+    // Without a local record of the order we cannot tell whether it is a trigger order, and the
+    // venue rejects fast cancels for those — so this path stays on the conservative encoding.
     send(actions::cancel(std::span<const CancelWire>{&w, 1}), std::move(pending));
     return {};
 }
@@ -438,37 +565,52 @@ Error ExchangeClient::cancelAll(std::string_view coin) {
     }
     std::vector<CancelByCloidWire> byCloid;
     std::vector<CancelWire> byOid;
-    PendingAction cloidPending;
-    PendingAction oidPending;
-    cloidPending.kind = ActionKind::Cancel;
-    oidPending.kind = ActionKind::Cancel;
+    std::vector<Cloid> cloidOrders;
+    std::vector<Cloid> oidOrders;
+    bool anyTrigger = false;
     for (auto& [cloid, t] : orders_) {
         Order& o = t.order;
         if (!o.isLive() || o.cancelPending || (!coin.empty() && o.coin != coin)) {
             continue;
         }
+        anyTrigger |= o.isTrigger;
         if (o.external) {
             if (o.oid == 0) {
                 continue;
             }
             byOid.push_back(CancelWire{o.asset, o.oid});
-            oidPending.cloids.push_back(cloid);
+            oidOrders.push_back(cloid);
         } else {
             byCloid.push_back(CancelByCloidWire{o.asset, cloid});
-            cloidPending.cloids.push_back(cloid);
+            cloidOrders.push_back(cloid);
         }
         o.cancelPending = true;
     }
-    if (!byCloid.empty()) {
-        send(actions::cancelByCloid(byCloid), std::move(cloidPending));
+    for (std::size_t from = 0; from < byCloid.size(); from += kMaxBatchEntries) {
+        const std::size_t count = std::min(kMaxBatchEntries, byCloid.size() - from);
+        PendingAction pending;
+        pending.kind = ActionKind::Cancel;
+        pending.cloids.assign(cloidOrders.begin() + static_cast<std::ptrdiff_t>(from),
+                              cloidOrders.begin() + static_cast<std::ptrdiff_t>(from + count));
+        send(actions::cancelByCloid(std::span<const CancelByCloidWire>{byCloid}.subspan(from, count),
+                                    config_.fastCancels && !anyTrigger),
+             std::move(pending));
     }
-    if (!byOid.empty()) {
-        send(actions::cancel(byOid), std::move(oidPending));
+    for (std::size_t from = 0; from < byOid.size(); from += kMaxBatchEntries) {
+        const std::size_t count = std::min(kMaxBatchEntries, byOid.size() - from);
+        PendingAction pending;
+        pending.kind = ActionKind::Cancel;
+        pending.cloids.assign(oidOrders.begin() + static_cast<std::ptrdiff_t>(from),
+                              oidOrders.begin() + static_cast<std::ptrdiff_t>(from + count));
+        send(actions::cancel(std::span<const CancelWire>{byOid}.subspan(from, count),
+                             config_.fastCancels && !anyTrigger),
+             std::move(pending));
     }
     return {};
 }
 
-Error ExchangeClient::modify(const Cloid& cloid, Decimal newPx, Decimal newSz) {
+Error ExchangeClient::modify(const Cloid& cloid, Decimal newPx, Decimal newSz,
+                             std::optional<TriggerSpec> newTrigger) {
     if (Error e = checkReady()) {
         return e;
     }
@@ -493,6 +635,7 @@ Error ExchangeClient::modify(const Cloid& cloid, Decimal newPx, Decimal newSz) {
     req.sz = newSz;
     req.tif = o.tif;
     req.reduceOnly = o.reduceOnly;
+    req.trigger = newTrigger.has_value() ? newTrigger : o.trigger;  // a stop stays a stop
     auto wire = buildWire(req, cloid);
     if (!wire) {
         return wire.error();
@@ -507,6 +650,7 @@ Error ExchangeClient::modify(const Cloid& cloid, Decimal newPx, Decimal newSz) {
     pending.kind = ActionKind::Modify;
     pending.cloids = {cloid};
     pending.modifyTargets = {{newPx, newSz}};
+    pending.modifyTrigger = newTrigger;
     o.modifyPending = true;
     t->canceledDuringModify = false;
     send(actions::batchModify(std::span<const ModifyWire>{&m, 1}), std::move(pending));
@@ -516,6 +660,14 @@ Error ExchangeClient::modify(const Cloid& cloid, Decimal newPx, Decimal newSz) {
 Error ExchangeClient::scheduleCancel(std::optional<std::int64_t> timeMs, ActionCallback callback) {
     if (!started_) {
         return Error{Error::Kind::Rejected, 0, "client not started"};
+    }
+    if (timeMs.has_value()) {
+        // The venue requires a trigger at least 5 s in the future and refuses more than 10 arms per
+        // UTC day; catching the first locally turns a silent venue rejection into a clear error.
+        const std::int64_t now = EventLoop::wallClockMs();
+        if (*timeMs < now + 5'000) {
+            return Error{Error::Kind::Rejected, 0, "scheduleCancel time must be at least 5 s in the future"};
+        }
     }
     PendingAction pending;
     pending.callback = std::move(callback);
@@ -545,6 +697,44 @@ Error ExchangeClient::updateLeverage(std::string_view coin, std::uint32_t levera
     return {};
 }
 
+Error ExchangeClient::updateIsolatedMargin(std::string_view coin, Decimal usdc, ActionCallback callback) {
+    if (Error e = checkReady()) {
+        return e;
+    }
+    const AssetInfo* asset = assets_.find(coin);
+    if (asset == nullptr || asset->kind != AssetInfo::Kind::Perp) {
+        return Error{Error::Kind::Rejected, 0, "unknown perp '" + std::string{coin} + "'"};
+    }
+    auto action = actions::updateIsolatedMargin(asset->asset, usdc);
+    if (!action) {
+        return action.error();
+    }
+    PendingAction pending;
+    pending.callback = std::move(callback);
+    send(action.value(), std::move(pending));
+    return {};
+}
+
+Error ExchangeClient::reserveRequestWeight(std::uint64_t weight, ActionCallback callback) {
+    if (!started_) {
+        return Error{Error::Kind::Rejected, 0, "client not started"};
+    }
+    PendingAction pending;
+    pending.callback = std::move(callback);
+    send(actions::reserveRequestWeight(weight), std::move(pending));
+    return {};
+}
+
+Error ExchangeClient::noop(ActionCallback callback) {
+    if (!started_) {
+        return Error{Error::Kind::Rejected, 0, "client not started"};
+    }
+    PendingAction pending;
+    pending.callback = std::move(callback);
+    send(actions::noop(), std::move(pending));
+    return {};
+}
+
 void ExchangeClient::submitAction(const EncodedAction& action, ActionCallback callback) {
     PendingAction pending;
     pending.callback = std::move(callback);
@@ -556,8 +746,14 @@ void ExchangeClient::submitAction(const EncodedAction& action, ActionCallback ca
 void ExchangeClient::send(const EncodedAction& action, PendingAction pending) {
     const std::uint64_t id = nextRequestId_++;
     ++stats_.actionsSent;
+    countRateLimitUnits(pending);
+    stats_.rateLimitHits = exchangeHttp_.rateLimitHits() + info_.http().rateLimitHits();
+    std::optional<std::uint64_t> expiresAfter;
+    if (config_.actionExpiryMs > 0) {
+        expiresAfter = static_cast<std::uint64_t>(EventLoop::wallClockMs() + config_.actionExpiryMs);
+    }
     if (config_.transport == ActionTransport::WebSocket && session_.isOpen()) {
-        const std::string frame = builder_.wsPostAction(id, action, nonces_.next());
+        const std::string frame = builder_.wsPostAction(id, action, nonces_->next(), expiresAfter);
         pending.viaWebSocket = true;
         pending.timer = loop_.addTimer(config_.requestTimeoutMs, [this, id] {
             if (auto it = pending_.find(id); it != pending_.end()) {
@@ -566,10 +762,14 @@ void ExchangeClient::send(const EncodedAction& action, PendingAction pending) {
             completeAction(id, Error{Error::Kind::Timeout, 0, "no response to WebSocket post"});
         });
         pending_.emplace(id, std::move(pending));
-        session_.send(frame);
+        if (!session_.send(frame)) {
+            // The socket died between the isOpen() check and the send: fail now instead of waiting
+            // for the timeout, so the affected orders are reconciled immediately.
+            completeAction(id, Error{Error::Kind::Transport, 0, "WebSocket send failed"});
+        }
         return;
     }
-    const std::string payload = builder_.payload(action, nonces_.next());
+    const std::string payload = builder_.payload(action, nonces_->next(), expiresAfter);
     ++stats_.actionsViaHttp;
     pending_.emplace(id, std::move(pending));
     exchangeHttp_.postJson("/exchange", payload, [this, id](const Error& err, const HttpResponse& resp) {
@@ -589,6 +789,16 @@ void ExchangeClient::send(const EncodedAction& action, PendingAction pending) {
 }
 
 void ExchangeClient::onPostResponse(const PostResponseMsg& msg) {
+    if (const auto it = pendingInfo_.find(msg.id); it != pendingInfo_.end()) {
+        auto callback = std::move(it->second);
+        pendingInfo_.erase(it);
+        if (msg.type == PostResponseMsg::Type::Error) {
+            callback(Result<std::string>{Error{Error::Kind::Venue, 0, std::string{msg.payload}}});
+        } else {
+            callback(Result<std::string>{std::string{msg.payload}});
+        }
+        return;
+    }
     switch (msg.type) {
         case PostResponseMsg::Type::Action:
             completeAction(msg.id, parseExchangeResponse(msg.payload));
@@ -597,8 +807,41 @@ void ExchangeClient::onPostResponse(const PostResponseMsg& msg) {
             completeAction(msg.id, Error{Error::Kind::Venue, 0, std::string{msg.payload}});
             break;
         case PostResponseMsg::Type::Info:
+            logf(LogLevel::Debug, "exchange: unmatched WebSocket info response id=%llu",
+                 static_cast<unsigned long long>(msg.id));
             break;
     }
+}
+
+void ExchangeClient::infoOverWebSocket(std::string infoJson,
+                                       std::function<void(const Result<std::string>&)> callback) {
+    if (!session_.isOpen()) {
+        callback(Result<std::string>{Error{Error::Kind::Transport, 0, "WebSocket is not connected"}});
+        return;
+    }
+    const std::uint64_t id = nextRequestId_++;
+    pendingInfo_.emplace(id, std::move(callback));
+    if (!session_.send(RequestBuilder::wsInfo(id, infoJson))) {
+        auto it = pendingInfo_.find(id);
+        if (it != pendingInfo_.end()) {
+            auto cb = std::move(it->second);
+            pendingInfo_.erase(it);
+            cb(Result<std::string>{Error{Error::Kind::Transport, 0, "WebSocket send failed"}});
+        }
+        return;
+    }
+    loop_.addTimer(config_.requestTimeoutMs, [this, id, alive = std::weak_ptr<int>(lifetime_)] {
+        if (alive.expired()) {
+            return;
+        }
+        auto it = pendingInfo_.find(id);
+        if (it == pendingInfo_.end()) {
+            return;
+        }
+        auto cb = std::move(it->second);
+        pendingInfo_.erase(it);
+        cb(Result<std::string>{Error{Error::Kind::Timeout, 0, "no response to WebSocket info request"}});
+    });
 }
 
 void ExchangeClient::completeAction(std::uint64_t requestId, const Result<ExchangeResponse>& result) {
@@ -665,7 +908,26 @@ void ExchangeClient::applyActionResult(const PendingAction& pending, const Resul
             continue;
         }
         const auto& statuses = result.value().statuses;
+        if (statuses.empty()) {
+            continue;
+        }
+        // A pre-validation failure is reported once for the whole payload (HL "error responses"),
+        // so a single status applies to every order of the batch; a short list leaves the rest
+        // unknown and they get reconciled below.
         if (i >= statuses.size()) {
+            if (statuses.size() == 1 && statuses.front().kind == ActionStatus::Kind::Error) {
+                o.lastError = statuses.front().error;
+                if (pending.kind == ActionKind::Order && o.state == OrderState::PendingNew) {
+                    o.state = OrderState::Rejected;
+                } else if (pending.kind == ActionKind::Cancel) {
+                    o.cancelPending = false;
+                } else if (pending.kind == ActionKind::Modify) {
+                    o.modifyPending = false;
+                }
+                emit(*t);
+            } else {
+                reconcile(cloid);
+            }
             continue;
         }
         const ActionStatus& st = statuses[i];
@@ -694,9 +956,13 @@ void ExchangeClient::applyActionResult(const PendingAction& pending, const Resul
                         o.px = pending.modifyTargets[i].first;
                         o.origSz = pending.modifyTargets[i].second;
                     }
+                    if (pending.modifyTrigger.has_value()) {
+                        o.trigger = pending.modifyTrigger;
+                        o.isTrigger = true;
+                    }
                     if (st.oid != 0 && st.oid != o.oid) {
                         if (o.oid != 0) {
-                            t->retiredOids.push_back(o.oid);
+                            t->retireOid(o.oid);
                         }
                         setOid(*t, st.oid);
                     }
@@ -845,7 +1111,7 @@ void ExchangeClient::onOrderUpdates(std::span<const OrderUpdateMsg> updates) {
                     u.status != OrderUpdateStatus::Triggered) {
                     continue;
                 }
-                t->retiredOids.push_back(t->order.oid);
+                t->retireOid(t->order.oid);
             }
             setOid(*t, u.oid);
         } else if (u.oid != 0 && t->order.oid == 0) {
@@ -879,7 +1145,14 @@ void ExchangeClient::onUserFills(const UserFillsMsg& msg) {
         }
         ++stats_.fills;
         const Fill fill = Fill::from(f);
-        positions_[fill.coin] = fill.endPosition();
+        // `startPosition` makes each fill an absolute statement about the position, so only a fill
+        // newer than the last one applied may move it (a snapshot can replay an old fill whose trade
+        // id has already been evicted from the dedupe window).
+        PositionState& position = positions_[fill.coin];
+        if (fill.timeMs >= position.lastFillMs) {
+            position.size = fill.endPosition();
+            position.lastFillMs = fill.timeMs;
+        }
 
         Tracked* t = f.cloid ? find(*f.cloid) : nullptr;
         if (t == nullptr) {
@@ -953,9 +1226,46 @@ void ExchangeClient::reconcileAll() {
             live.push_back(cloid);
         }
     }
-    for (const auto& cloid : live) {
-        reconcile(cloid);
+    if (live.empty()) {
+        return;
     }
+    // One list query settles every order the venue still has open; only the ones missing from it
+    // need an individual orderStatus probe (they were filled, canceled or never accepted).
+    ++stats_.reconciles;
+    info_.openOrders(user_, [this, live](const Result<std::vector<OpenOrder>>& r) {
+        if (!r) {
+            logf(LogLevel::Warn, "exchange: reconcile via openOrders failed (%s) — probing each order",
+                 r.error().message.c_str());
+            for (const auto& cloid : live) {
+                reconcile(cloid);
+            }
+            return;
+        }
+        std::vector<Cloid> unresolved;
+        for (const auto& cloid : live) {
+            Tracked* t = find(cloid);
+            if (t == nullptr || !t->order.isLive()) {
+                continue;
+            }
+            const OpenOrder* match = nullptr;
+            for (const auto& open : r.value()) {
+                if ((open.cloid && *open.cloid == cloid) || (t->order.oid != 0 && open.oid == t->order.oid)) {
+                    match = &open;
+                    break;
+                }
+            }
+            if (match == nullptr) {
+                unresolved.push_back(cloid);
+                continue;
+            }
+            setOid(*t, match->oid);
+            applyVenueStatus(*t, OrderUpdateStatus::Open, "open", match->limitPx, match->origSz);
+            emit(*t);
+        }
+        for (const auto& cloid : unresolved) {
+            reconcile(cloid);
+        }
+    });
 }
 
 // ── bookkeeping ─────────────────────────────────────────────────────────────
@@ -995,17 +1305,60 @@ std::vector<const Order*> ExchangeClient::liveOrders(std::string_view coin) cons
 }
 
 Decimal ExchangeClient::position(std::string_view coin) const noexcept {
-    for (const auto& [name, pos] : positions_) {
-        if (name == coin) {
-            return pos;
-        }
-    }
-    return {};
+    const auto it = positions_.find(std::string{coin});
+    return it == positions_.end() ? Decimal{} : it->second.size;
 }
 
 void ExchangeClient::emit(Tracked& t) {
     t.order.updatedMs = EventLoop::wallClockMs();
     listener_.onOrderUpdate(t.order);
+}
+
+RateLimitStatus ExchangeClient::rateLimitStatus() const noexcept {
+    RateLimitStatus out = rateLimit_;
+    out.requestsUsed += stats_.addressUnitsUsed - unitsAtLastRefresh_;  // submitted since the last refresh
+    return out;
+}
+
+void ExchangeClient::countRateLimitUnits(const PendingAction& pending) {
+    // The venue counts one address-based unit per order or cancel in a batch, one for other actions.
+    stats_.addressUnitsUsed += pending.cloids.empty() ? 1 : pending.cloids.size();
+    const RateLimitStatus status = rateLimitStatus();
+    if (status.requestsCap == 0) {
+        return;
+    }
+    const double remaining = static_cast<double>(status.remaining()) / static_cast<double>(status.requestsCap);
+    if (remaining >= config_.rateLimitWarnFraction) {
+        rateLimitWarned_ = false;
+        return;
+    }
+    if (!rateLimitWarned_) {
+        rateLimitWarned_ = true;
+        logf(LogLevel::Warn,
+             "exchange: request budget nearly exhausted (%llu of %llu used) — the venue throttles to one request "
+             "per 10 s when it runs out; traded volume or reserveRequestWeight raises the cap",
+             static_cast<unsigned long long>(status.requestsUsed),
+             static_cast<unsigned long long>(status.requestsCap));
+    }
+}
+
+void ExchangeClient::armRateLimitRefresh() {
+    // The first refresh runs promptly so the budget is known before serious order flow starts.
+    rateLimitTimer_ = loop_.addTimer(rateLimit_.requestsCap == 0 ? 200 : config_.rateLimitRefreshMs, [this] {
+        rateLimitTimer_ = 0;
+        if (!started_) {
+            return;
+        }
+        info_.rateLimit(user_, [this](const Result<RateLimitStatus>& r) {
+            if (r) {
+                rateLimit_ = r.value();
+                unitsAtLastRefresh_ = stats_.addressUnitsUsed;
+            }
+        });
+        if (started_ && config_.rateLimitRefreshMs > 0) {
+            armRateLimitRefresh();
+        }
+    });
 }
 
 void ExchangeClient::armEviction() {

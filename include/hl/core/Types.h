@@ -37,6 +37,15 @@ enum class Tif : std::uint8_t {
 
 [[nodiscard]] std::string_view toString(Tif tif) noexcept;
 
+/**
+ * @brief True when @p coin only contains characters Hyperliquid uses in market names
+ *        (letters, digits, `/`, `@`, `-`, `_`, `.`, `:`).
+ *
+ * Market names are interpolated into JSON requests and subscriptions; validating them keeps a
+ * caller-supplied string from producing malformed JSON.
+ */
+[[nodiscard]] bool isValidCoinName(std::string_view coin) noexcept;
+
 /// 20-byte EVM address.
 using Address = std::array<std::uint8_t, 20>;
 

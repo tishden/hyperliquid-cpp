@@ -3,6 +3,47 @@
 All notable changes to this project are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## [1.3.0] — 2026-09-19
+
+Result of a full code review and an audit of the connector against the Hyperliquid API documentation,
+the official Python SDK and the live venue.
+
+### Added
+- **Venue coverage**: TP/SL grouping and order-priority fees (`grouping:{"p":rate}`), builder codes,
+  `updateIsolatedMargin`, `noop`, `reserveRequestWeight`, the `fast` flag on cancels, `expiresAfter` on every
+  action (`ExchangeConfig::actionExpiryMs`).
+- **Info**: `userRole`, `spotBalances`, `rateLimit`, `userFillsByTime`, `userFunding`, `historicalOrders`,
+  `perpContexts` (`metaAndAssetCtxs`), `fundingHistory`, `predictedFundings`, `candles`.
+- **WebSocket**: typed `candle`, `userEvents` (liquidations, venue cancels, funding — channel `user`),
+  `userFundings`, `activeAssetData`, `notification`, with subscription helpers.
+- **Rate limits**: address-budget tracking (`rateLimitStatus()`, `Stats::addressUnitsUsed`), periodic refresh
+  from the venue, a warning before exhaustion, 429 + `Retry-After` handling that pauses the queue, and cancel
+  batches split at 40 entries.
+- **Start-up**: adopts orders the venue already has open (`adoptExistingOrders`), seeds spot balances when
+  `loadSpotAssets` is set, and detects an API-wallet/master-account mismatch.
+- `ExchangeListener::onLiquidation` / `onFunding`; `WsSession::reconnectNow`/`clearSubscriptions`;
+  shared `NonceGenerator` for clients that use one signing key; `docs/COVERAGE.md`.
+
+### Fixed
+- `modify()` silently dropped a trigger order's stop/take-profit specification, turning it into a plain limit
+  order; a new overload can also move the trigger.
+- A venue error reported once for a whole batch left the other orders of the batch pending forever.
+- Undefined behaviour when re-subscribing user channels after adopting an agent's master account.
+- `WsSession::reconnectNow()` during a connect left the session dead with no retry timer.
+- `~Signer` called `join()` on a thread that does not exist in a forked child (`std::terminate`).
+- A replayed old fill could rewind the tracked position; positions now only move forward in venue time.
+- Re-entrancy: running the event loop from inside a callback corrupted the WebSocket, JSON and HTTP buffers.
+  The decoder, parser, TLS read path and HTTP client are now re-entrancy safe.
+- `Decimal::mul`/`div` wrapped on overflow; they now saturate (`max()`, `min()`, `isSaturated()`).
+- Reconciliation after a reconnect used one request per live order; it now lists open orders once.
+- TLS handshakes inherited the per-address connect budget; a shared `SSL_CTX` replaces one per stream;
+  reads are bounded per readiness event; `scheduleCancel` validates the venue's 5-second rule.
+- Coin names are validated before they are interpolated into JSON.
+
+### Changed
+- 186 tests (from 138), including re-entrancy, restart, eviction, stale fills, fast cancels, batch errors,
+  rate limits, parser fuzzing and the new info endpoints.
+
 ## [1.2.0] — 2026-09-19
 
 ### Added

@@ -81,3 +81,17 @@ TEST(Decimal, RoundToQuantum) {
     EXPECT_EQ(hl::roundToQuantum(d("-10.75"), tick, RoundingMode::Nearest), d("-11"));
     EXPECT_EQ(hl::roundToQuantum(d("10.5"), tick, RoundingMode::Up), d("10.5"));
 }
+
+TEST(Decimal, ArithmeticSaturatesInsteadOfWrapping) {
+    const Decimal big = d("92233720368.5");  // close to the representation limit
+    EXPECT_EQ(big.mul(Decimal::fromInt(1000)), Decimal::max());
+    EXPECT_EQ(big.mul(Decimal::fromInt(-1000)), Decimal::min());
+    EXPECT_TRUE(big.mul(Decimal::fromInt(1000)).isSaturated());
+    EXPECT_FALSE(d("2").mul(d("3")).isSaturated());
+    EXPECT_EQ(d("2").mul(d("3")), d("6"));
+    // Dividing by a tiny number overflows the mantissa: saturate rather than wrap to a negative.
+    EXPECT_EQ(Decimal::fromInt(1000).div(d("0.00000001")), Decimal::max());
+    EXPECT_EQ(Decimal::fromInt(-1000).div(d("0.00000001")), Decimal::min());
+    EXPECT_EQ(Decimal::max().toString(), "92233720368.54775807");
+    EXPECT_EQ(Decimal::min().toString(), "-92233720368.54775808");
+}

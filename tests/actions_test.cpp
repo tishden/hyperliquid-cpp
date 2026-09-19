@@ -288,3 +288,106 @@ TEST(Decimal, ToCharsMatchesToString) {
         EXPECT_EQ(std::string(buf, v.toChars(buf)), v.toString());
     }
 }
+
+TEST(Actions, BuilderFeeMatchesSdk) {
+    const std::array<hl::OrderWire, 1> orders{btcAlo()};
+    hl::BuilderFee fee{*hl::parseAddress("0x1719884eb866cb12b2287399b15f7db5e7d775ea"), 10};
+    const auto action = hl::actions::order(orders, hl::Grouping::Na, fee);
+    expectGolden(action,
+                 {"84a474797065a56f72646572a66f72646572739187a16100a162c3a170a53530303030a173a5302e303031a172c2a174"
+                  "81a56c696d697481a3746966a3416c6fa163d92230783030303030303030303030303030303030303030303030303030"
+                  "303061626364a867726f7570696e67a26e61a76275696c64657282a162d92a3078313731393838346562383636636231"
+                  "32623232383733393962313566376462356537643737356561a1660a",
+                  "b207c3c19f82256bb23fe0f7afb4ba22f1d1786ea3292a49496b446e91e892cb",
+                  "0x32da36a59322f2a6f1b1030db3fae6d6b9f41fd2c98cfb71fe40b7ff04762733",
+                  "0x7325a0c8b3e9adf4bb40293ac39250a6f861d0b8b4e0e4dcbc2d6d5cde8025f6", 27});
+    EXPECT_NE(action.json.find(R"("builder":{"b":"0x1719884eb866cb12b2287399b15f7db5e7d775ea","f":10})"),
+              std::string::npos)
+        << action.json;
+}
+
+TEST(Actions, TpSlGroupingMatchesSdk) {
+    hl::OrderWire tp;
+    tp.asset = 0;
+    tp.isBuy = false;
+    tp.px = d("55000");
+    tp.sz = d("0.001");
+    tp.reduceOnly = true;
+    tp.trigger = hl::TriggerSpec{d("55000"), true, hl::TriggerSpec::Kind::TakeProfit};
+    const std::array<hl::OrderWire, 2> orders{btcAlo(), tp};
+    expectGolden(hl::actions::order(orders, hl::Grouping::NormalTpsl),
+                 {"83a474797065a56f72646572a66f72646572739287a16100a162c3a170a53530303030a173a5302e303031a172c2a174"
+                  "81a56c696d697481a3746966a3416c6fa163d92230783030303030303030303030303030303030303030303030303030"
+                  "30306162636486a16100a162c2a170a53535303030a173a5302e303031a172c3a17481a77472696767657283a869734d"
+                  "61726b6574c3a9747269676765725078a53535303030a47470736ca27470a867726f7570696e67aa6e6f726d616c5470"
+                  "736c",
+                  "227402e28ead9883c4e214c6e4f8f064fe9b3bcf342d3c2119ed681292282d2f",
+                  "0x12227731ca0aef584a8ab1f3894b6db42f394a54c9c316758810204b6cbc3185",
+                  "0x381e4a751ace736d194c747ed7ca6f0e1fd2b78f1015a5c7a65f54e610e58909", 28});
+    EXPECT_EQ(hl::groupingWire(hl::Grouping::PositionTpsl), "positionTpsl");
+}
+
+TEST(Actions, UpdateIsolatedMarginMatchesSdk) {
+    auto action = hl::actions::updateIsolatedMargin(3, d("1.5"));  // 1.5 USDC = 1 500 000 micro
+    ASSERT_TRUE(action) << action.error().message;
+    expectGolden(action.value(),
+                 {"84a474797065b475706461746549736f6c617465644d617267696ea5617373657403a56973427579c3a46e746c69ce0016e360",
+                  "8cd992013a94888227c16b5c11472b214577b627c70ea73f315daf83d91d28fe",
+                  "0x2d35c3a41c75e273c91c167b06dca311587e531bfd420bed34512e8d6c3f0add",
+                  "0x6847c92710d31b81c952a4efabcf356cadfaae804f1c38f6a6685ba93d3ed7df", 28});
+    EXPECT_EQ(action->json, R"({"type":"updateIsolatedMargin","asset":3,"isBuy":true,"ntli":1500000})");
+
+    auto withdraw = hl::actions::updateIsolatedMargin(3, d("-2.25"));
+    ASSERT_TRUE(withdraw);
+    EXPECT_EQ(withdraw->json, R"({"type":"updateIsolatedMargin","asset":3,"isBuy":true,"ntli":-2250000})");
+
+    auto tooFine = hl::actions::updateIsolatedMargin(3, d("0.0000001"));
+    EXPECT_FALSE(tooFine);
+    EXPECT_EQ(tooFine.error().kind, hl::Error::Kind::Rejected);
+}
+
+TEST(Actions, NoopAndReserveRequestWeightMatchSdk) {
+    expectGolden(hl::actions::noop(), {"81a474797065a46e6f6f70",
+                                       "ef5dcef9775ebb2c5a6553314e66a6a57bd7e9b2319a869a8b17f08fa48bdcaf",
+                                       "0xa094d7afdcaffc2e2643f31df05a7594de12880e6558e17021d863c868a06972",
+                                       "0x2ec74c7efddc03c04b04a660effe31f52ce3cddd2e0b80c68486ec772ca42ce2", 28});
+    expectGolden(hl::actions::reserveRequestWeight(100),
+                 {"82a474797065b47265736572766552657175657374576569676874a677656967687464",
+                  "563edd869be403df3f36968646120cadd4171844a1aad2ea59db3c5568b40a07",
+                  "0xeaefaff0f2f339ec98ac1e2299fba159ba0a29960b23fec3a7e5c17fd0c01e9c",
+                  "0x6c46e056940bc746f64c875fc29165e7b0b1cfbd46cb36e2d8f919757b15e947", 28});
+    EXPECT_EQ(hl::actions::reserveRequestWeight(100).json, R"({"type":"reserveRequestWeight","weight":100})");
+}
+
+
+// Wire shapes for the two latency levers. No SDK golden exists for these (the pinned SDK predates
+// them), so the expected bytes come from msgpack-python over the documented action shape, and the
+// encoding was accepted by the live testnet (priority fees are rejected semantically, for lack of a
+// staking balance, which proves the action deserialized).
+TEST(Actions, PriorityFeeGrouping) {
+    const std::array<hl::OrderWire, 1> orders{btcAlo()};
+    const auto action = hl::actions::order(orders, hl::PriorityRate{10000});  // 1 bp
+    EXPECT_EQ(hexOf(action.msgpack),
+              "83a474797065a56f72646572a66f72646572739187a16100a162c3a170a53530303030a173a5302e303031a172c2a174"
+              "81a56c696d697481a3746966a3416c6fa163d92230783030303030303030303030303030303030303030303030303030"
+              "303061626364a867726f7570696e6781a170cd2710");
+    EXPECT_NE(action.json.find(R"("grouping":{"p":10000})"), std::string::npos) << action.json;
+}
+
+TEST(Actions, FastCancelFlag) {
+    const std::array<hl::CancelWire, 1> cancels{{{0, 1}}};
+    const auto fast = hl::actions::cancel(cancels, /*fast=*/true);
+    EXPECT_EQ(hexOf(fast.msgpack), "83a474797065a663616e63656ca763616e63656c739182a16100a16f01a166c3");
+    EXPECT_EQ(fast.json, R"({"type":"cancel","cancels":[{"a":0,"o":1}],"f":true})");
+    // The flag must be absent — not false — when it is not requested: it is part of the hash.
+    const auto plain = hl::actions::cancel(cancels);
+    EXPECT_EQ(plain.json, R"({"type":"cancel","cancels":[{"a":0,"o":1}]})");
+    EXPECT_EQ(hexOf(plain.msgpack).find("a166c2"), std::string::npos);
+
+    const std::array<hl::CancelByCloidWire, 1> byCloid{{{0, hl::Cloid::fromU64(1)}}};
+    const auto fastCloid = hl::actions::cancelByCloid(byCloid, /*fast=*/true);
+    EXPECT_EQ(hexOf(fastCloid.msgpack),
+              "83a474797065ad63616e63656c4279436c6f6964a763616e63656c739182a5617373657400a5636c6f6964d922307830"
+              "30303030303030303030303030303030303030303030303030303030303031a166c3");
+    EXPECT_NE(fastCloid.json.find(R"(],"f":true})"), std::string::npos);
+}

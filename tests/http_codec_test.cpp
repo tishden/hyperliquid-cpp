@@ -77,3 +77,15 @@ TEST(HttpCodec, NoBodyStatusesAndErrors) {
     EXPECT_EQ(feedAll(truncated, "HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc", consumed), Status::NeedMore);
     EXPECT_EQ(truncated.finishOnClose(), Status::Error);
 }
+
+TEST(HttpCodec, RetryAfterHeader) {
+    hl::HttpResponseParser p;
+    std::size_t consumed = 0;
+    const std::string wire = "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 7\r\nContent-Length: 3\r\n\r\nno!";
+    ASSERT_EQ(p.feed(wire.data(), wire.size(), consumed), Status::Complete);
+    EXPECT_EQ(p.response().status, 429);
+    EXPECT_EQ(p.response().retryAfterSeconds, 7);
+    hl::HttpResponseParser plain;
+    ASSERT_EQ(plain.feed("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n", 38, consumed), Status::Complete);
+    EXPECT_EQ(plain.response().retryAfterSeconds, 0);
+}

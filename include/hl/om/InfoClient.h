@@ -50,7 +50,29 @@ public:
     void l2Book(std::string_view coin, Callback<L2Snapshot> callback);
     /// Mid price of every coin.
     void allMids(Callback<std::vector<std::pair<std::string, Decimal>>> callback);
-    /// Send any info request body (e.g. `{"type":"fundingHistory",...}`) and receive the raw JSON.
+    /// Spot token balances of @p user (`spotClearinghouseState`).
+    void spotBalances(const Address& user, Callback<std::vector<SpotBalance>> callback);
+    /// Request budget of @p user (`userRateLimit`): HL grants 1 request per USDC of traded volume.
+    void rateLimit(const Address& user, Callback<RateLimitStatus> callback);
+    /// Fills of @p user in a time range (`userFillsByTime`), oldest first — use it to recover missed fills.
+    void userFillsByTime(const Address& user, std::int64_t startTimeMs, std::int64_t endTimeMs,
+                         Callback<std::vector<Fill>> callback);
+    /// Funding paid/received by @p user in a time range (`userFunding`).
+    void userFunding(const Address& user, std::int64_t startTimeMs, std::int64_t endTimeMs,
+                     Callback<std::vector<FundingPayment>> callback);
+    /// Terminal orders of @p user (`historicalOrders`), most recent first.
+    void historicalOrders(const Address& user, Callback<std::vector<OrderStatusInfo>> callback);
+    /// Metadata and live context (funding, mark, oracle, open interest, volume) of every perp (`metaAndAssetCtxs`).
+    void perpContexts(Callback<std::vector<PerpContext>> callback);
+    /// Historical funding rates of one coin (`fundingHistory`).
+    void fundingHistory(std::string_view coin, std::int64_t startTimeMs, std::int64_t endTimeMs,
+                        Callback<std::vector<FundingRate>> callback);
+    /// Funding rates predicted by other venues, for cross-venue carry (`predictedFundings`).
+    void predictedFundings(Callback<std::vector<PredictedFunding>> callback);
+    /// OHLCV candles (`candleSnapshot`); @p interval is "1m", "15m", "1h", "1d", …
+    void candles(std::string_view coin, std::string_view interval, std::int64_t startTimeMs, std::int64_t endTimeMs,
+                 Callback<std::vector<Candle>> callback);
+    /// Send any info request body (e.g. `{"type":"vaultDetails",...}`) and receive the raw JSON.
     void raw(std::string requestJson, Callback<std::string> callback);
 
     [[nodiscard]] HttpClient& http() noexcept { return http_; }

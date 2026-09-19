@@ -16,11 +16,13 @@ set(HL_UNIT_TESTS
     exchange_response_test
     ws_codec_test
     http_codec_test
+    http_client_test
     url_test
     event_loop_test
     exchange_client_test
     market_data_client_test
     scalar_test
+    info_client_test
     nonce_pool_test
 )
 

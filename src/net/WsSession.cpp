@@ -56,6 +56,16 @@ void WsSession::unsubscribe(std::string_view subscriptionJson) {
     subscriptions_.erase(it);
 }
 
+void WsSession::clearSubscriptions() {
+    std::vector<std::string> subs;
+    subs.swap(subscriptions_);  // detach first: sending must not iterate the container being emptied
+    if (ws_.isOpen()) {
+        for (const auto& sub : subs) {
+            ws_.sendText(R"({"method":"unsubscribe","subscription":)" + sub + "}");
+        }
+    }
+}
+
 bool WsSession::send(std::string_view text) { return ws_.sendText(text); }
 
 void WsSession::reconnectNow(std::string_view reason) {
@@ -67,6 +77,11 @@ void WsSession::reconnectNow(std::string_view reason) {
     ws_.close();
     if (wasOpen) {
         onWsClosed(reason);  // same path as a spontaneous close: listener, backoff, resubscribe
+    } else {
+        // Closing a socket that was still connecting produces no close callback, so schedule the
+        // retry here — otherwise the session would stay down with no timer armed.
+        disarm();
+        scheduleReconnect();
     }
 }
 

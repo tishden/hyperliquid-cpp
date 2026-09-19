@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "hl/core/Decimal.h"
+#include "hl/core/Result.h"
 #include "hl/core/Types.h"
 #include "hl/crypto/Signer.h"
 
@@ -37,6 +38,46 @@ struct OrderWire {
     Tif tif{Tif::Gtc};                   ///< ignored when `trigger` is set
     std::optional<TriggerSpec> trigger{};
     std::optional<Cloid> cloid{};
+};
+
+/**
+ * @brief How the venue links the orders of one `order` action.
+ *
+ * `NormalTpsl` and `PositionTpsl` attach take-profit / stop-loss children to a parent order or to the
+ * whole position: send the parent first and the trigger orders after it **in the same action**.
+ */
+enum class Grouping : std::uint8_t {
+    Na,           ///< independent orders (the default)
+    NormalTpsl,   ///< parent order + its TP/SL children
+    PositionTpsl, ///< TP/SL attached to the position rather than to one order
+};
+
+[[nodiscard]] std::string_view groupingWire(Grouping grouping) noexcept;
+
+/**
+ * @brief Order-priority fee (`grouping: {"p": rate}`), the venue's alternative to co-location.
+ *
+ * `rate` is a fraction of 1e8 of the filled notional (IOC) or resting notional (ALO), charged from
+ * the undelegated staking balance. The venue only accepts it when every order in the action is IOC,
+ * or every order is a non-reduce-only ALO, and no order is on an outcome asset.
+ * Empirically ~45 ms of end-to-end latency per basis point (`rate = 10000`) up to 8 bps.
+ */
+struct PriorityRate {
+    std::uint32_t rate{};  ///< fraction of 1e8, e.g. 10000 = 1 bp
+};
+
+/// Either a named grouping or a priority-fee rate.
+using OrderGrouping = std::variant<Grouping, PriorityRate>;
+
+/**
+ * @brief Builder-code fee attached to an order action.
+ *
+ * Routes a share of the trading fee to a builder address that the account has approved
+ * (`approveBuilderFee`, done once outside this library).
+ */
+struct BuilderFee {
+    Address address{};              ///< builder address (sent lower-case)
+    std::uint32_t feeTenthsOfBps{}; ///< fee in tenths of a basis point, e.g. 10 = 1 bp
 };
 
 /// Cancel by exchange order id.
@@ -70,18 +111,33 @@ struct EncodedAction {
 
 namespace actions {
 
-/// `{"type":"order","orders":[…],"grouping":…}` — batch of 1..N orders (one rate-limit unit per ≤ 40).
-[[nodiscard]] EncodedAction order(std::span<const OrderWire> orders, std::string_view grouping = "na");
-/// `{"type":"cancel","cancels":[{"a","o"},…]}`
-[[nodiscard]] EncodedAction cancel(std::span<const CancelWire> cancels);
-/// `{"type":"cancelByCloid","cancels":[{"asset","cloid"},…]}`
-[[nodiscard]] EncodedAction cancelByCloid(std::span<const CancelByCloidWire> cancels);
+/// `{"type":"order","orders":[…],"grouping":…[,"builder":{…}]}` — batch of 1..N orders (one rate-limit unit per ≤ 40).
+[[nodiscard]] EncodedAction order(std::span<const OrderWire> orders, OrderGrouping grouping = Grouping::Na,
+                                  const std::optional<BuilderFee>& builder = std::nullopt);
+/**
+ * @brief `{"type":"cancel","cancels":[{"a","o"},…][,"f":true]}`
+ * @param fast sets the venue's `fast` flag (future mempool prioritisation of cancels). The venue
+ *             rejects fast cancels of **trigger** orders, so it is omitted when false.
+ */
+[[nodiscard]] EncodedAction cancel(std::span<const CancelWire> cancels, bool fast = false);
+/// `{"type":"cancelByCloid","cancels":[{"asset","cloid"},…][,"f":true]}` — see cancel() for @p fast.
+[[nodiscard]] EncodedAction cancelByCloid(std::span<const CancelByCloidWire> cancels, bool fast = false);
 /// `{"type":"batchModify","modifies":[{"oid","order"},…]}`
 [[nodiscard]] EncodedAction batchModify(std::span<const ModifyWire> modifies);
 /// `{"type":"scheduleCancel"[,"time":ms]}` — dead-man's switch; `nullopt` clears it.
 [[nodiscard]] EncodedAction scheduleCancel(std::optional<std::uint64_t> timeMs);
 /// `{"type":"updateLeverage","asset","isCross","leverage"}`
 [[nodiscard]] EncodedAction updateLeverage(std::uint32_t asset, bool isCross, std::uint32_t leverage);
+/**
+ * @brief `{"type":"updateIsolatedMargin","asset","isBuy":true,"ntli"}` — add or remove isolated margin.
+ * @param usdc Amount to add (positive) or remove (negative). Must be a whole number of micro-USDC
+ *             (six decimals); finer amounts are rejected with `Error{Rejected}`.
+ */
+[[nodiscard]] Result<EncodedAction> updateIsolatedMargin(std::uint32_t asset, Decimal usdc);
+/// `{"type":"noop"}` — does nothing; burns a nonce (useful to test signing or to advance the nonce window).
+[[nodiscard]] EncodedAction noop();
+/// `{"type":"reserveRequestWeight","weight"}` — spend accumulated rate-limit budget to reserve request weight.
+[[nodiscard]] EncodedAction reserveRequestWeight(std::uint64_t weight);
 
 }  // namespace actions
 

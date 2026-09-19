@@ -1,0 +1,1 @@
+[{"order":{"coin":"ETH","side":"B","limitPx":"2500.0","sz":"0.0","oid":123,"timestamp":1789800000000,"origSz":"0.01","cloid":"0x00000000000000000000000000000abc","reduceOnly":false,"orderType":"Limit","tif":"Alo","isTrigger":false,"triggerPx":"0.0"},"status":"filled","statusTimestamp":1789800001000}]

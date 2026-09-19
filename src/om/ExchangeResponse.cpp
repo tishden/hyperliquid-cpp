@@ -28,7 +28,28 @@ Result<ExchangeResponse> parseExchangeResponse(std::string_view body) {
     }
     ExchangeResponse out;
     out.type = std::string{response.field("type").asString()};
-    const auto statuses = response.field("data").field("statuses");
+    const auto data = response.field("data");
+    // Some actions (twapOrder / twapCancel) report a single `status` instead of a `statuses` array.
+    if (!data.field("statuses").isArray() && data.field("status").present()) {
+        const auto single = data.field("status");
+        ActionStatus st;
+        if (single.isString()) {
+            const auto text = single.asString();
+            st.kind = text == "success" ? ActionStatus::Kind::Success : ActionStatus::Kind::Error;
+            if (st.kind == ActionStatus::Kind::Error) {
+                st.error = std::string{text};
+            }
+        } else if (auto err = single.field("error"); err.present()) {
+            st.kind = ActionStatus::Kind::Error;
+            st.error = err.isString() ? std::string{err.asString()} : err.dump();
+        } else {
+            st.kind = ActionStatus::Kind::Success;
+            st.error = single.dump();  // e.g. {"running":{"twapId":…}} — kept verbatim for the caller
+        }
+        out.statuses.push_back(std::move(st));
+        return out;
+    }
+    const auto statuses = data.field("statuses");
     for (auto item : statuses.array()) {
         ActionStatus st;
         if (item.isString()) {

@@ -38,15 +38,22 @@ The signed bytes are `msgpack.packb(action)` as produced by `msgpack-python`:
 
 | Action | Map (key order) |
 |---|---|
-| order | `{type:"order", orders:[wire…], grouping:"na"}` |
+| order | `{type:"order", orders:[wire…], grouping, [builder:{b:address, f:tenthsOfBp}]}` |
+| grouping | `"na"` \| `"normalTpsl"` \| `"positionTpsl"` \| `{p: rate}` (order-priority fee, rate/1e8) |
 | order wire | `{a:asset, b:isBuy, p:px, s:sz, r:reduceOnly, t:type, [c:cloid]}` |
 | limit type | `{limit:{tif:"Alo"\|"Ioc"\|"Gtc"}}` |
 | trigger type | `{trigger:{isMarket:bool, triggerPx:str, tpsl:"tp"\|"sl"}}` |
-| cancel | `{type:"cancel", cancels:[{a:asset, o:oid}…]}` |
-| cancelByCloid | `{type:"cancelByCloid", cancels:[{asset:asset, cloid:"0x…"}…]}` |
+| cancel | `{type:"cancel", cancels:[{a:asset, o:oid}…], [f:true]}` |
+| cancelByCloid | `{type:"cancelByCloid", cancels:[{asset:asset, cloid:"0x…"}…], [f:true]}` |
 | batchModify | `{type:"batchModify", modifies:[{oid: oid(uint) \| cloid(str), order: wire}…]}` |
 | scheduleCancel | `{type:"scheduleCancel"[, time:ms]}` |
 | updateLeverage | `{type:"updateLeverage", asset, isCross:bool, leverage}` |
+| updateIsolatedMargin | `{type:"updateIsolatedMargin", asset, isBuy:true, ntli}` — `ntli` is signed micro-USDC |
+| noop | `{type:"noop"}` |
+| reserveRequestWeight | `{type:"reserveRequestWeight", weight}` |
+
+The `f` (fast) flag on cancels is **omitted when false**, not sent as `false`: it is part of the hashed bytes,
+so the two encodings are different actions. The venue rejects fast cancels that refer to trigger orders.
 
 `asset` is the index in the perp universe (`meta`) or `10000 + index` for spot pairs (`spotMeta`).
 Asset ids differ between mainnet and testnet — always resolve by name.
@@ -97,7 +104,7 @@ The domain separator and type hashes are constants and are computed once.
 - The signer is identified by recovery: the venue derives the address from `(digest, r, s, v)`. If that
   address is neither an account nor an approved agent wallet, the response is
   `User or API Wallet 0x… does not exist.` — a convenient end-to-end check that signing is correct
-  (see [TESTNET.md](TESTNET.md#verifying-signing-without-funds)).
+  (see [TESTNET.md](TESTNET.md#7-verifying-signing-without-funds)).
 
 ## 6. Request body
 
@@ -111,7 +118,9 @@ The domain separator and type hashes are constants and are computed once.
 }
 ```
 
-`"expiresAfter": <ms>` is appended when used. Over WebSocket the same object is wrapped:
+`"expiresAfter": <ms>` is appended when used (`ExchangeConfig::actionExpiryMs` sets it on every action; the
+venue drops an action that arrives after that timestamp and charges 5× the usual address-based rate limit for
+it). Over WebSocket the same object is wrapped:
 `{"method":"post","id":<n>,"request":{"type":"action","payload":<body>}}`.
 
 **Nonces** must be unique among the signer's 100 highest nonces and lie within (now − 2 days,

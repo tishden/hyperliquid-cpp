@@ -18,6 +18,7 @@
 #include <string>
 #include <vector>
 
+#include "common/Credentials.h"
 #include "hl/hyperliquid.h"
 
 namespace {
@@ -40,10 +41,9 @@ public:
 
     // ── listeners ───────────────────────────────────────────────────────────
     void onReady() override { ready_ = true; }
-    void onDisconnected(std::string_view reason) override {
+    void onDisconnected(std::string_view /*reason*/) override {
         ready_ = false;
         ++disconnects_;
-        lastDisconnect_ = std::string{reason};
     }
     void onOrderUpdate(const hl::Order& o) override {
         ++updates_;
@@ -116,9 +116,6 @@ public:
     }
 
     [[nodiscard]] bool taker() const noexcept { return taker_; }
-    [[nodiscard]] const std::string& coin() const noexcept { return coin_; }
-    hl::ExchangeClient& ex() { return *ex_; }
-    hl::MarketDataClient& md() { return *md_; }
 
 private:
     hl::EventLoop& loop_;
@@ -131,50 +128,16 @@ private:
     bool ready_{false};
     int disconnects_{0};
     std::uint64_t updates_{0};
-    std::string lastDisconnect_;
     std::vector<hl::Fill> fills_;
     std::vector<StepResult> results_;
 };
-
-std::string env(const char* name) {
-    const char* v = std::getenv(name);
-    return v != nullptr ? v : "";
-}
-
-void loadKeyFile(const std::string& path, std::string& key, std::string& account, std::string& vault) {
-    std::ifstream in(path);
-    if (!in) {
-        std::fprintf(stderr, "cannot read key file %s\n", path.c_str());
-        std::exit(2);
-    }
-    for (std::string line; std::getline(in, line);) {
-        const auto eq = line.find('=');
-        if (line.empty() || line[0] == '#' || eq == std::string::npos) {
-            continue;
-        }
-        const std::string k = line.substr(0, eq);
-        std::string v = line.substr(eq + 1);
-        while (!v.empty() && (v.back() == '\r' || v.back() == ' ')) {
-            v.pop_back();
-        }
-        if (k == "HL_PRIVATE_KEY") {
-            key = v;
-        } else if (k == "HL_ACCOUNT_ADDRESS") {
-            account = v;
-        } else if (k == "HL_VAULT_ADDRESS") {
-            vault = v;
-        }
-    }
-}
 
 }  // namespace
 
 int main(int argc, char** argv) {
     std::setvbuf(stdout, nullptr, _IOLBF, 0);
     std::string coin = "ETH";
-    std::string key = env("HL_PRIVATE_KEY");
-    std::string account = env("HL_ACCOUNT_ADDRESS");
-    std::string vault = env("HL_VAULT_ADDRESS");
+    example::Credentials credentials = example::credentialsFromEnv();
     hl::Decimal notional = hl::Decimal::fromInt(12);
     double offsetBps = 200.0;
     bool taker = false;
@@ -184,6 +147,8 @@ int main(int argc, char** argv) {
     bool mainnetAck = false;
     bool verbose = false;
     std::size_t presign = 64;
+    std::int64_t expiryMs = 0;
+    std::uint32_t priorityRate = 0;
 
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -197,7 +162,10 @@ int main(int argc, char** argv) {
         if (a == "--coin") {
             coin = next();
         } else if (a == "--key-file") {
-            loadKeyFile(next(), key, account, vault);
+            if (!example::loadCredentialsFile(next(), credentials)) {
+                std::fprintf(stderr, "cannot read the key file\n");
+                return 2;
+            }
         } else if (a == "--notional") {
             notional = hl::Decimal::parseOrZero(next());
         } else if (a == "--offset-bps") {
@@ -208,6 +176,10 @@ int main(int argc, char** argv) {
             httpTransport = next() == "http";
         } else if (a == "--taker") {
             taker = true;
+        } else if (a == "--expiry-ms") {
+            expiryMs = std::stoll(next());
+        } else if (a == "--priority-rate") {
+            priorityRate = static_cast<std::uint32_t>(std::stoul(next()));
         } else if (a == "--presign") {
             presign = static_cast<std::size_t>(std::stoull(next()));
         } else if (a == "--mainnet") {
@@ -221,6 +193,8 @@ int main(int argc, char** argv) {
             std::printf("usage: hl_live_check [--coin ETH] [--key-file PATH] [--notional 12] [--offset-bps 200]\n"
                         "                     [--taker] [--transport ws|http] [--presign N] [--verbose]\n"
                         "                     [--flatten]   cancel all orders and close the position, then exit\n"
+                        "                     [--expiry-ms N] attach expiresAfter = now + N to every action\n"
+                        "                     [--priority-rate N] order priority fee, fraction of 1e8 (10000 = 1 bp)\n"
                         "                     [--mainnet --i-understand-this-trades-real-money]\n");
             return 0;
         } else {
@@ -232,7 +206,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "refusing to run on mainnet without --i-understand-this-trades-real-money\n");
         return 2;
     }
-    if (key.empty()) {
+    if (credentials.privateKey.empty()) {
         std::fprintf(stderr, "no private key: set HL_PRIVATE_KEY or pass --key-file\n");
         return 2;
     }
@@ -249,10 +223,11 @@ int main(int argc, char** argv) {
 
     hl::ExchangeConfig exCfg;
     exCfg.network = network;
-    exCfg.privateKey = key;
-    exCfg.accountAddress = account;
-    exCfg.vaultAddress = vault;
+    exCfg.privateKey = credentials.privateKey;
+    exCfg.accountAddress = credentials.accountAddress;
+    exCfg.vaultAddress = credentials.vaultAddress;
     exCfg.precomputedNonces = presign;
+    exCfg.actionExpiryMs = expiryMs;
     exCfg.transport = httpTransport ? hl::ActionTransport::Http : hl::ActionTransport::WebSocket;
     std::unique_ptr<hl::ExchangeClient> ex;
     try {
@@ -263,9 +238,9 @@ int main(int argc, char** argv) {
     }
     runner.attach(*ex, md);
 
-    std::printf("hyperliquid-cpp %s — live acceptance check on %s (%s, %s transport, presign %zu)\n",
+    std::printf("hyperliquid-cpp %s — live acceptance check on %s (%s, %s transport, presign %zu%s)\n",
                 hl::kVersionString, mainnet ? "MAINNET" : "testnet", coin.c_str(), httpTransport ? "HTTP" : "WebSocket",
-                presign);
+                presign, expiryMs > 0 ? ", expiresAfter" : "");
     md.start();
     ex->start();
 
@@ -692,6 +667,36 @@ int main(int argc, char** argv) {
         detail = std::to_string(remaining) + " open orders on the venue";
         return remaining == 0;
     });
+
+    // ── 12b. priority-fee grouping (optional) ───────────────────────────────
+    if (priorityRate != 0) {
+        runner.step("order with a priority fee (grouping {\"p\": rate})", [&](std::string& detail) {
+            std::vector<hl::OrderRequest> one{runner.request(hl::Side::Buy, runner.priceAway(hl::Side::Buy, offsetBps))};
+            auto placed = ex->placeOrders(one, hl::PriorityRate{priorityRate});
+            if (!placed) {
+                detail = placed.error().message;
+                return false;
+            }
+            const hl::Cloid cloid = placed->front();
+            if (!runner.waitFor([&] {
+                    const hl::Order* o = ex->findOrder(cloid);
+                    return o != nullptr && o->state != hl::OrderState::PendingNew;
+                })) {
+                detail = "no response";
+                return false;
+            }
+            const hl::Order* o = ex->findOrder(cloid);
+            detail = std::string{hl::toString(o->state)} + (o->lastError.empty() ? "" : ": " + o->lastError);
+            if (o->isLive()) {
+                (void)ex->cancel(cloid);
+                runner.waitFor([&] { return ex->liveOrders(coin).empty(); }, 10'000);
+            }
+            // The venue charges the fee from undelegated staking balance; without one it rejects the
+            // order. Either outcome proves the wire encoding was accepted (a malformed action would
+            // fail to deserialize instead).
+            return o->state == hl::OrderState::Open || o->state == hl::OrderState::Rejected;
+        });
+    }
 
     // ── 13. leave the account flat ──────────────────────────────────────────
     runner.step("no leftover position (a resting test order may have been filled)", [&](std::string& detail) {

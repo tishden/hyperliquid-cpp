@@ -52,13 +52,18 @@ public:
     /// Cancel a pending timer (no-op if it already fired).
     void cancelTimer(TimerId id);
 
-    /// Queue @p task to run on the loop thread (thread-safe; wakes the loop).
+    /**
+     * @brief Queue @p task to run on the loop thread (thread-safe; wakes the loop).
+     *
+     * The loop must outlive every thread that can call this; a task posted to a destroyed loop is
+     * undefined behaviour. Tasks queued but not yet run are dropped when the loop is destroyed.
+     */
     void postThreadSafe(Task task);
 
     /**
      * @brief Wait up to @p maxWaitMs for I/O, then dispatch I/O, due timers and posted tasks.
      * @param maxWaitMs  0 = non-blocking poll, -1 = wait until something happens.
-     * @return number of I/O events dispatched.
+     * @return number of I/O events dispatched (timers and posted tasks are not counted).
      */
     int runOnce(int maxWaitMs = -1);
 

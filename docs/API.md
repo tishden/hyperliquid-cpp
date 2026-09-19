@@ -41,6 +41,7 @@ This document describes every public type and function of the library as declare
    - [5.7 AssetRegistry and AssetInfo (price/size rules)](#57-assetregistry-and-assetinfo-pricesize-rules)
    - [5.8 Account and order data types (om/Types.h)](#58-account-and-order-data-types-omtypesh)
    - [5.9 ExchangeResponse](#59-exchangeresponse)
+   - [5.10 Rate limits and request budget](#510-rate-limits-and-request-budget)
 6. [Signing and low-level actions](#6-signing-and-low-level-actions)
    - [6.1 Signer, actionHash, agentDigest](#61-signer-actionhash-agentdigest)
    - [6.2 Keccak256](#62-keccak256)
@@ -85,7 +86,7 @@ OpenSSL forward declarations only. simdjson and libsecp256k1 are linked privatel
 | `hl/hyperliquid.h` | Umbrella header — includes every public header below |
 | `hl/Version.h` | `kVersionMajor`, `kVersionMinor`, `kVersionPatch`, `kVersionString` |
 | `hl/core/Decimal.h` | `Decimal`, `RoundingMode`, `roundToQuantum`, `operator<<` |
-| `hl/core/Types.h` | `Network`, `restUrl`, `wsUrl`, `Side`, `opposite`, `Tif`, `Address`, `parseAddress`, `toHex`, `Cloid`, `CloidHash`, `Error` |
+| `hl/core/Types.h` | `Network`, `restUrl`, `wsUrl`, `Side`, `opposite`, `Tif`, `isValidCoinName`, `Address`, `parseAddress`, `toHex`, `Cloid`, `CloidHash`, `Error` |
 | `hl/core/Result.h` | `Result<T>` |
 | `hl/core/Log.h` | `LogLevel`, `LogSink`, `setLogSink`, `setLogLevel`, `logLevel`, `logf` |
 | `hl/core/Hex.h` | `toHex(bytes)`, `hexNibble`, `stripHexPrefix`, `fromHex` |
@@ -98,9 +99,9 @@ OpenSSL forward declarations only. simdjson and libsecp256k1 are linked privatel
 | `hl/om/ExchangeClient.h` | `ExchangeConfig`, `ActionTransport`, `OrderState`, `Order`, `OrderRequest`, `ExchangeListener`, `ExchangeClient` |
 | `hl/om/InfoClient.h` | `InfoClient` |
 | `hl/om/AssetRegistry.h` | `AssetInfo`, `AssetRegistry` |
-| `hl/om/Types.h` | `Fill`, `OpenOrder`, `OrderStatusInfo`, `Position`, `AccountState`, `L2Snapshot` |
+| `hl/om/Types.h` | `Fill`, `OpenOrder`, `OrderStatusInfo`, `Position`, `AccountState`, `SpotBalance`, `RateLimitStatus`, `Candle`, `FundingRate`, `PredictedFunding`, `FundingPayment`, `PerpContext`, `UserRole`, `L2Snapshot` |
 | `hl/om/ExchangeResponse.h` | `ActionStatus`, `ExchangeResponse`, `parseExchangeResponse` |
-| `hl/om/Actions.h` | `TriggerSpec`, `OrderWire`, `CancelWire`, `CancelByCloidWire`, `ModifyWire`, `EncodedAction`, `actions::*`, `NonceGenerator`, `RequestBuilder` |
+| `hl/om/Actions.h` | `TriggerSpec`, `OrderWire`, `Grouping`, `groupingWire`, `PriorityRate`, `OrderGrouping`, `BuilderFee`, `CancelWire`, `CancelByCloidWire`, `ModifyWire`, `EncodedAction`, `actions::*`, `NonceGenerator`, `RequestBuilder` |
 | `hl/om/MsgPack.h` | `MsgPackWriter` |
 | `hl/crypto/Keccak.h` | `Hash256`, `Keccak256`, `keccak256` |
 | `hl/crypto/Signer.h` | `Signature`, `actionHash`, `agentDigest`, `Signer` |
@@ -127,8 +128,26 @@ The umbrella header `hl/hyperliquid.h` includes every header listed above.
 - `Signer` signing methods are `const` and may be called concurrently; `NonceGenerator::next()` is lock-free and
   thread-safe; `setLogSink` / `setLogLevel` are atomic.
 - `WsMessageParser` is not thread-safe — one parser per thread.
-- Calling back into the client from its own listener (e.g. `placeOrder` inside `onOrderUpdate`) is supported.
-- Do **not** destroy a client from inside one of its own callbacks.
+
+**What a callback may do.** Calling back into the client from its own listener (e.g. `placeOrder` inside
+`onOrderUpdate`) is supported, and so is **running the event loop re-entrantly** — the "wait until my order
+rests" idiom:
+
+```cpp
+void onFill(const hl::Fill&) override {
+    ex->placeOrder(req);                 // fine
+    while (!done) { loop->runOnce(5); }  // also fine: the stack below is re-entrancy safe
+}
+```
+
+`WsFrameDecoder` stages bytes that arrive during a callback and decodes them in the outer call,
+`WsMessageParser` keeps one parse state per nesting level, `TlsStream::doRead` ignores nested entry, and
+`HttpClient` stages response bytes that arrive while a response callback runs. Views handed to the outer
+callback therefore stay valid. The cost is extra buffers, so re-entrant loop pumping is a convenience for
+start-up and tooling, not something to do on every message.
+
+**What a callback must not do:** destroy the client or the `EventLoop` it runs on, or block for long — every
+other client on that loop is stalled meanwhile.
 
 ### 1.3 Lifetimes of views and pointers
 
@@ -141,6 +160,9 @@ The umbrella header `hl/hyperliquid.h` includes every header listed above.
 | `const OrderBook*` from `MarketDataClient::book` | The client is destroyed |
 | `const AssetInfo*` from `AssetRegistry::find` | The registry is modified or destroyed (`ExchangeClient::assets()` is replaced once, when metadata loads) |
 | `PostResponseMsg::payload` | The callback returns |
+
+Views stay valid even if the callback runs the event loop re-entrantly ([§1.2](#12-threading-model)); they are
+invalidated only by returning from the callback.
 
 ### 1.4 Error model
 
@@ -203,9 +225,20 @@ Range ±92 233 720 368.54775807. All prices, sizes, notionals, fees and funding 
 | `static constexpr std::size_t kMaxChars = 24` | Longest possible wire form |
 | `std::size_t toChars(char* out) const` | Writes the wire form into a caller buffer of at least `kMaxChars` bytes (no NUL); returns the length. Allocation-free. |
 | `operator-()` (unary), `operator+`, `operator-`, `operator+=`, `operator-=` | Plain mantissa arithmetic, no overflow check |
-| `Decimal mul(Decimal o) const` | Product via 128-bit intermediate, **truncated toward zero** to 8 decimals |
-| `Decimal div(Decimal o) const` | Quotient, truncated toward zero; **returns zero when `o` is zero** |
+| `Decimal mul(Decimal o) const` | Product via 128-bit intermediate, **truncated toward zero**, **saturating** at `max()` / `min()` |
+| `Decimal div(Decimal o) const` | Quotient, truncated toward zero, saturating; **returns zero when `o` is zero** |
+| `static constexpr Decimal max() / min()` | ±92 233 720 368.54775807 / −…808 |
+| `constexpr bool isSaturated() const` | The value sits at a representation limit — typically a saturated `mul`/`div` result |
 | `operator<=>`, `operator==` | Defaulted comparison on the mantissa |
+
+`mul` and `div` saturate rather than wrap, so a notional computed from absurd inputs can never turn into a
+valid-looking negative price; `operator+` / `operator-` are plain mantissa arithmetic and do wrap. Check
+`isSaturated()` where the distinction matters.
+
+```cpp
+hl::Decimal::parseOrZero("92233720368.5").mul(hl::Decimal::fromInt(1000)); // == Decimal::max(), isSaturated()
+hl::Decimal::fromInt(1000).div(hl::Decimal::parseOrZero("0.00000001"));    // == Decimal::max()
+```
 
 Free function: `std::ostream& operator<<(std::ostream&, Decimal)` — writes `toString()`.
 
@@ -238,7 +271,7 @@ Decimal roundToQuantum(Decimal value, std::int64_t quantumRaw, RoundingMode mode
 
 | Mode | Meaning |
 |---|---|
-| `Down` | Toward negative infinity |
+| `Down` | Toward negative infinity — **except** `AssetInfo::roundSz`, which rounds toward zero (below) |
 | `Up` | Toward positive infinity |
 | `Nearest` | Nearest multiple; ties away from zero |
 
@@ -480,7 +513,7 @@ All methods have empty defaults. Inherited raw-message callbacks are listed in
 | `onBookUpdate(book, Snapshot)` | Right after `onL2Book`, for coins with a maintained book |
 | `onBbo(msg)` | Every `bbo` frame, **before** any book mutation |
 | `onBookUpdate(book, Bbo)` | After `onBbo`, only if `applyBboToBooks`, the coin has a book, at least one snapshot has been applied, and `OrderBook::applyBbo` accepted the update (not older than the last snapshot) |
-| `onTrades`, `onAssetCtx`, `onAllMids`, `onOrderUpdates`, `onUserFills`, `onPostResponse`, `onSubscriptionResponse`, `onPong`, `onUnhandled` | Forwarded unchanged |
+| `onTrades`, `onAssetCtx`, `onAllMids`, `onOrderUpdates`, `onUserFills`, `onCandle`, `onLiquidation`, `onNonUserCancels`, `onUserFundings`, `onActiveAssetData`, `onNotification`, `onPostResponse`, `onSubscriptionResponse`, `onPong`, `onUnhandled` | Forwarded unchanged |
 | `onVenueError(text)` | Forwarded after a Warn-level log line |
 
 > A class deriving from both `MarketDataListener` and `ExchangeListener` overrides both `onDisconnected`
@@ -500,6 +533,11 @@ public:
     void subscribeTrades(std::string_view coin);
     void subscribeAssetCtx(std::string_view coin);
     void subscribeAllMids();
+    void subscribeCandle(std::string_view coin, std::string_view interval);
+    void subscribeUserEvents(const Address& user);
+    void subscribeUserFundings(const Address& user);
+    void subscribeActiveAssetData(const Address& user, std::string_view coin);
+    void subscribeNotifications(const Address& user);
     void subscribeRaw(std::string subscriptionJson);
     void unsubscribeRaw(std::string_view subscriptionJson);
     static std::string subscriptionJson(std::string_view type, std::string_view coin = {});
@@ -521,8 +559,13 @@ public:
 | `subscribeTrades(coin)` | `{"type":"trades","coin":C}` |
 | `subscribeAssetCtx(coin)` | `{"type":"activeAssetCtx","coin":C}` (HL replies on channel `activeAssetCtx` for perps, `activeSpotAssetCtx` for spot) |
 | `subscribeAllMids()` | `{"type":"allMids"}` |
-| `subscribeRaw(json)` | Any subscription object, e.g. `{"type":"candle","coin":"BTC","interval":"1m"}`. Frames of channels without a typed callback arrive in `onUnhandled`. |
-| `unsubscribeRaw(json)` | Removes a subscription registered with exactly this JSON and sends `unsubscribe` if connected. Use `subscriptionJson()` to reproduce what a typed helper sent. A maintained book is not removed. |
+| `subscribeCandle(coin, interval)` | `{"type":"candle","coin":C,"interval":I}` with `interval` one of `1m`, `3m`, `5m`, `15m`, `30m`, `1h`, `2h`, `4h`, `8h`, `12h`, `1d`, `3d`, `1w`, `1M` → `onCandle` |
+| `subscribeUserEvents(user)` | `{"type":"userEvents","user":"0x…"}`. **The venue answers on channel `user`**, not `userEvents`. One subscription feeds four callbacks: `onUserFills` (`isSnapshot == false`), `onUserFundings` (a single entry), `onLiquidation` and `onNonUserCancels`. |
+| `subscribeUserFundings(user)` | `{"type":"userFundings","user":"0x…"}` → `onUserFundings` (the `fundings` array; the first message is the recent history) |
+| `subscribeActiveAssetData(user, coin)` | `{"type":"activeAssetData","user":"0x…","coin":C}` → `onActiveAssetData` |
+| `subscribeNotifications(user)` | `{"type":"notification","user":"0x…"}` → `onNotification` |
+| `subscribeRaw(json)` | Any subscription object, e.g. `{"type":"userTwapSliceFills","user":"0x…"}`. Frames of channels without a typed callback arrive in `onUnhandled`. |
+| `unsubscribeRaw(json)` | Removes a subscription registered with exactly this JSON and sends `unsubscribe` if connected. Use `subscriptionJson()` to reproduce what a typed helper sent. If the JSON is an `l2Book` subscription, the maintained book for that coin is **destroyed** as well, so `book(coin)` returns `nullptr` instead of a frozen snapshot. |
 | `subscriptionJson(type, coin)` | `{"type":"<type>"[,"coin":"<coin>"]}` |
 | `book(coin)` | Maintained book, or `nullptr` if there was no `subscribeL2Book` for that coin |
 | `isConnected()` | WebSocket open |
@@ -535,6 +578,12 @@ ignored), sent immediately if connected, and replayed after every reconnect.
 
 Do not subscribe to both an aggregated (`nSigFigs`) and an unaggregated `l2Book` for the same coin on one
 client: `l2Book` frames do not identify their aggregation, and both would feed the same `OrderBook`.
+
+Coin names are validated with `isValidCoinName` ([§2.3](#23-typesh--network-side-tif-address-cloid-error)) before
+a subscription object is built. `subscribeL2Book`, `subscribeCandle` and `subscribeActiveAssetData` log an error
+and do nothing when the name is empty, longer than 64 characters, or contains a character outside
+`A-Z a-z 0-9 / @ - _ . :` — this keeps an unsanitised name from being spliced into the subscription JSON. Addresses are
+formatted with `toHex`, so the user subscriptions are always well formed.
 
 ### 4.4 OrderBook
 
@@ -703,6 +752,73 @@ subscribing has `isSnapshot == true` and contains recent historical fills.
 | `tid` | `std::uint64_t` | `tid` |
 | `cloid` | `std::optional<Cloid>` | `cloid` |
 
+#### CandleMsg — channel `candle`
+
+One OHLCV bar. The bar currently forming is re-sent on every update, so the same `openTimeMs` arrives many times.
+
+| Field | Type | Wire (`data.*`) |
+|---|---|---|
+| `coin` | `std::string_view` | `s` |
+| `interval` | `std::string_view` | `i` |
+| `openTimeMs` | `std::int64_t` | `t` |
+| `closeTimeMs` | `std::int64_t` | `T` |
+| `open`, `close`, `high`, `low` | `Decimal` | `o`, `c`, `h`, `l` |
+| `volume` | `Decimal` | `v` — base-asset volume |
+| `trades` | `std::uint64_t` | `n` |
+
+#### LiquidationMsg — channel `user` (from `userEvents`)
+
+The account was liquidated; the venue has already closed the positions.
+
+| Field | Type | Wire (`data.liquidation.*`) |
+|---|---|---|
+| `lid` | `std::uint64_t` | `lid` |
+| `liquidator` | `std::string_view` | `liquidator` |
+| `liquidatedUser` | `std::string_view` | `liquidated_user` |
+| `liquidatedNtlPos` | `Decimal` | `liquidated_ntl_pos` |
+| `liquidatedAccountValue` | `Decimal` | `liquidated_account_value` |
+
+#### NonUserCancelMsg — channel `user` (delivered as a span)
+
+An order the venue cancelled on its own: margin, self-trade prevention, delisting, open-interest caps, a fired
+scheduled cancel.
+
+| Field | Type | Wire (`data.nonUserCancel[].*`) |
+|---|---|---|
+| `coin` | `std::string_view` | `coin` |
+| `oid` | `std::uint64_t` | `oid` |
+
+#### UserFundingMsg — channels `user` and `userFundings` (delivered as a span)
+
+| Field | Type | Wire |
+|---|---|---|
+| `timeMs` | `std::int64_t` | `time` |
+| `coin` | `std::string_view` | `coin` |
+| `usdc` | `Decimal` | `usdc` — negative = paid by the account |
+| `szi` | `Decimal` | `szi` — signed position it was charged on |
+| `rate` | `Decimal` | `fundingRate` |
+
+On channel `user` the payload is a single `data.funding` object and the span has exactly one element; on channel
+`userFundings` it is the `data.fundings` array.
+
+#### ActiveAssetDataMsg — channel `activeAssetData`
+
+| Field | Type | Wire (`data.*`) |
+|---|---|---|
+| `user` | `std::string_view` | `user` |
+| `coin` | `std::string_view` | `coin` |
+| `leverage` | `std::uint32_t` | `leverage.value` |
+| `isCross` | `bool` | `leverage.type == "cross"` |
+| `maxTradeSzBuy`, `maxTradeSzSell` | `Decimal` | `maxTradeSzs[0]`, `maxTradeSzs[1]` |
+| `availableToTradeBuy`, `availableToTradeSell` | `Decimal` | `availableToTrade[0]`, `availableToTrade[1]` |
+| `markPx` | `Decimal` | `markPx` |
+
+#### NotificationMsg — channel `notification`
+
+| Field | Type | Wire |
+|---|---|---|
+| `text` | `std::string_view` | `data.notification` |
+
 #### PostResponseMsg — channel `post`
 
 | Field | Type | Wire |
@@ -734,6 +850,12 @@ public:
     virtual void onAllMids(const AllMidsMsg&) {}
     virtual void onOrderUpdates(std::span<const OrderUpdateMsg>) {}
     virtual void onUserFills(const UserFillsMsg&) {}
+    virtual void onCandle(const CandleMsg&) {}
+    virtual void onLiquidation(const LiquidationMsg&) {}
+    virtual void onNonUserCancels(std::span<const NonUserCancelMsg>) {}
+    virtual void onUserFundings(std::span<const UserFundingMsg>) {}
+    virtual void onActiveAssetData(const ActiveAssetDataMsg&) {}
+    virtual void onNotification(const NotificationMsg&) {}
     virtual void onPostResponse(const PostResponseMsg&) {}
     virtual void onSubscriptionResponse(const SubscriptionResponseMsg&) {}
     virtual void onPong() {}
@@ -751,6 +873,11 @@ public:
 | `allMids` | `onAllMids` |
 | `orderUpdates` | `onOrderUpdates` |
 | `userFills` | `onUserFills` |
+| `candle` | `onCandle` |
+| `user` (what a `userEvents` subscription actually delivers) | `onUserFills` for `data.fills` (always with `isSnapshot == false`), `onUserFundings` for `data.funding` (a one-element span), `onLiquidation` for `data.liquidation`, `onNonUserCancels` for `data.nonUserCancel` |
+| `userFundings` | `onUserFundings` (the `data.fundings` array) |
+| `activeAssetData` | `onActiveAssetData` |
+| `notification` | `onNotification` |
 | `post` | `onPostResponse` |
 | `subscriptionResponse` | `onSubscriptionResponse` |
 | `pong` | `onPong` |
@@ -801,7 +928,15 @@ enum class ActionTransport : std::uint8_t { WebSocket, Http };
 | `transport` | `ActionTransport` | `WebSocket` | See above |
 | `precomputedNonces` | `std::size_t` | `0` (off) | Size of the precomputed-nonce ECDSA pool kept full by an internal background thread ([§6.1](#61-signer-actionhash-agentdigest)). Cuts signing from ~40 µs to ~0.17 µs per action; signatures become randomised. Recommended: 256–1024 for active quoting. |
 | `requestTimeoutMs` | `std::int64_t` | `10000` | Deadline for a **WebSocket** post response. On expiry the action fails with `Timeout` and affected orders are reconciled. (HTTP actions use `http.requestTimeoutMs`.) |
-| `loadSpotAssets` | `bool` | `false` | Also load `spotMeta` so spot pairs can be traded |
+| `loadSpotAssets` | `bool` | `false` | Also load `spotMeta`, so spot pairs can be traded, **and** seed spot balances from `spotClearinghouseState`. Adds one `/info` round-trip to start-up; readiness waits for it. |
+| `subscribeUserEvents` | `bool` | `true` | Also subscribe to `userEvents`. This is the only source of `onLiquidation` and of venue-initiated cancels; leave it on unless you are minimising the private stream. |
+| `adoptExistingOrders` | `bool` | `true` | At start-up, take over the orders the venue already has open for this account ([§5.5](#55-exchangeclient)) |
+| `builderFee` | `std::optional<BuilderFee>` | none | Builder code added to every order action that does not pass one explicitly. Requires a one-time `approveBuilderFee` from the master account (not provided by this SDK, see [§6.4](#64-wire-structs)). |
+| `fastCancels` | `bool` | `true` | Send cancels with the venue's `fast` flag. Trigger orders are always cancelled without it — the venue rejects fast cancels for them. |
+| `actionExpiryMs` | `std::int64_t` | `0` (off) | Attach `expiresAfter = now + actionExpiryMs` to every signed action. The venue drops an action that arrives later — a per-action dead-man's switch for a network stall. Applies to both transports. **An action rejected for a stale `expiresAfter` costs 5× the usual address rate-limit budget**, so do not set this below your worst-case round-trip. |
+| `rateLimitRefreshMs` | `std::int64_t` | `60000` | How often to refresh the address request budget from `userRateLimit` (0 = never). See [§5.10](#510-rate-limits-and-request-budget). |
+| `rateLimitWarnFraction` | `double` | `0.1` | Log a warning (once per crossing) when the remaining budget falls below this fraction |
+| `nonces` | `std::shared_ptr<NonceGenerator>` | none | Shared nonce source. The venue tracks nonces **per signing key**: two clients using the same key (master + sub-account, or perp + spot) must be given one generator, or one of them will be rejected for a non-increasing nonce. Empty = the client owns a private generator. |
 | `terminalOrderRetentionMs` | `std::int64_t` | `60000` | Filled / canceled / rejected orders are evicted this long after their last update |
 | `restUrlOverride` | `std::string` | empty | Base URL for `/info` and `/exchange` (e.g. `http://127.0.0.1:8080`) |
 | `wsUrlOverride` | `std::string` | empty | WebSocket URL |
@@ -854,6 +989,12 @@ Precise rules as implemented:
 | `WaitingForFill`, `WaitingForTrigger`, `Success` | `PendingNew` → `Open` |
 | `Error` | `lastError = error`; `PendingNew` → `Rejected` |
 
+**Short status lists.** Statuses are matched to the batch by position. A pre-validation failure is reported by the
+venue once for the whole payload, so when the batch had *N* entries but the response carries exactly **one** status
+and that status is an `Error`, the error is applied to **every** entry of the batch (orders in `PendingNew` become
+`Rejected`, cancels and modifies just clear their pending flag). Any other short list leaves the remaining entries
+unknown, and each of them is **reconciled** instead of guessed.
+
 **Action failure** (the whole action returned an `Error`, e.g. `{"status":"err"}`, timeout, disconnect). `lastError`
 is set to the error message, then:
 
@@ -896,7 +1037,11 @@ acknowledgement arrives (success → ignored; failure → reconcile).
   come from `clearinghouseState`).
 - Any later message — including snapshots sent after a reconnect — is applied fill by fill. Fills are deduplicated
   by `tid` (the last 20 000 tids are remembered).
-- For each new fill: `position(coin) = fill.endPosition()`; `onFill` is invoked (even for fills of unknown orders);
+- **Stale-fill protection**: `startPosition` makes a fill an absolute statement about the position, so a fill is
+  only allowed to move `position(coin)` when its `time` is **not older** than the newest fill already applied to
+  that coin. A snapshot that replays a fill whose trade id has already fallen out of the dedupe window therefore
+  cannot rewind the position. `onFill` is still delivered.
+- For each new fill: `position(coin) = fill.endPosition()` (subject to the rule above); `onFill` is invoked (even for fills of unknown orders);
   then, if the order is tracked, fill sum and notional are accumulated, `filledSz` and `avgFillPx` recomputed and a
   non-terminal order becomes `Filled` when `filledSz >= origSz`, else `PartiallyFilled`; `onOrderUpdate` follows.
 
@@ -904,12 +1049,18 @@ acknowledgement arrives (success → ignored; failure → reconcile).
 `avgFillPx` is the fill-weighted average when fills were seen, otherwise the ack's `avgPx`. This avoids double
 counting when an immediate-fill ack and the corresponding fills both arrive.
 
-**Reconciliation**: an `orderStatus` info request for the order (`user` = vault if configured, else account; by
-cloid, or by oid for external orders). If the request itself fails, it is retried every 2 s while the order is live
-and the client is started. If the venue does not know the order and it is still `PendingNew`, it becomes
+**Reconciliation** of a single order: an `orderStatus` info request (`user` = vault if configured, else account;
+by cloid, or by oid for external orders). If the request itself fails, it is retried every 2 s while the order is
+live and the client is started. If the venue does not know the order and it is still `PendingNew`, it becomes
 `Rejected` (with `lastError = "order not found on venue"` if no error was recorded). Otherwise the venue status is
 applied exactly like an `orderUpdates` entry. Triggers: action timeout or transport error, failed cancel, failed
-modify, and — for **every live order** — each time the client becomes ready again after a reconnect.
+modify, an unresolved entry of a short status list.
+
+**Reconciliation of the whole table** happens each time the client becomes ready again after a reconnect. It is a
+single `frontendOpenOrders` sweep, not one request per order: every live order that the venue still lists is
+resynchronised from that list (oid, limit price, original size, status `open`), and only the orders **missing**
+from it — filled, cancelled or never accepted — get an individual `orderStatus` probe. If the sweep itself fails,
+the client falls back to probing every live order. `Stats::reconciles` counts the sweep as one.
 
 **External orders**: orders seen in `orderUpdates` that this client did not place (other sessions, the UI) are
 tracked with `external = true`, using the venue cloid if present, else a synthetic `Cloid{0xFFFFFFFFFFFFFFFF, oid}`.
@@ -931,6 +1082,7 @@ They can be canceled (by oid) and modified (the wire order omits the cloid).
 | `tif` | `Tif` | |
 | `reduceOnly` | `bool` | |
 | `isTrigger` | `bool` | Placed with a `TriggerSpec` |
+| `trigger` | `std::optional<TriggerSpec>` | The trigger of a stop / take-profit order, preserved across `modify`. Set for orders this client placed; for orders **adopted** from the venue only `isTrigger` is known, and `trigger` stays empty (the `frontendOpenOrders` entry is not decoded into a `TriggerSpec`). |
 | `state` | `OrderState` | |
 | `cancelPending` | `bool` | A cancel is in flight |
 | `modifyPending` | `bool` | A modify is in flight |
@@ -962,6 +1114,8 @@ public:
     virtual void onDisconnected(std::string_view reason) {}
     virtual void onOrderUpdate(const Order& order) {}
     virtual void onFill(const Fill& fill) {}
+    virtual void onLiquidation(const LiquidationMsg& msg) {}
+    virtual void onFunding(const UserFundingMsg& msg) {}
     virtual void onError(const Error& error) {}
 };
 ```
@@ -972,7 +1126,18 @@ public:
 | `onDisconnected(reason)` | Private WebSocket lost. `isReady()` is already `false`; actions in flight over the WebSocket have been failed with `Transport` (their orders are being reconciled). |
 | `onOrderUpdate(order)` | Any processed ack, update, fill or reconcile result touching the order (may fire without a visible change) |
 | `onFill(fill)` | Each new, deduplicated execution — before the corresponding `onOrderUpdate` |
-| `onError(error)` | Asset metadata load failure (retried every 2 s) and venue `error` frames on the private stream |
+| `onLiquidation(msg)` | This account was liquidated; the venue has already closed the positions. Requires `ExchangeConfig::subscribeUserEvents` — there is no other source for it. |
+| `onFunding(msg)` | A funding payment was applied to the account, once per entry. Also requires `subscribeUserEvents`. |
+
+`userEvents` also carries venue-initiated cancels. They have no listener callback of their own: each
+`nonUserCancel` entry is matched by `oid` and applied to the order table as a cancel with
+`lastError = "canceledByVenue"`, surfacing as an ordinary `onOrderUpdate`.
+| `onError(error)` | Asset metadata load failure (retried every 2 s), the agent/account mismatch described in [§5.5](#55-exchangeclient), and venue `error` frames on the private stream |
+
+Every callback runs on the event-loop thread and may call any client method, including running the loop
+re-entrantly ([§1.2](#12-threading-model)). It must not destroy the client or the loop. The `LiquidationMsg` /
+`UserFundingMsg` views are valid only for the duration of the call; the `Order` reference stays valid until the
+order is evicted.
 
 ### 5.5 ExchangeClient
 
@@ -990,9 +1155,21 @@ public:
 | Method | Description |
 |---|---|
 | `ExchangeClient(loop, listener, config)` | Parses the key and addresses; throws `std::invalid_argument` on malformed input ([§1.5](#15-exceptions)). No I/O. |
-| `void start()` | Idempotent. Requests `meta` (+ `spotMeta` if `loadSpotAssets`) and `clearinghouseState`, registers `{"type":"orderUpdates","user":U}` and `{"type":"userFills","user":U}` subscriptions, connects the WebSocket and starts the eviction timer. `U` = vault if configured, else account. |
+| `void start()` | Idempotent. Requests `meta` (+ `spotMeta` if `loadSpotAssets`) and `clearinghouseState` (+ `spotClearinghouseState` if `loadSpotAssets`), registers `{"type":"orderUpdates","user":U}`, `{"type":"userFills","user":U}` and — unless `subscribeUserEvents` is off — `{"type":"userEvents","user":U}`, connects the WebSocket and starts the order-eviction and rate-limit-refresh timers. `U` = vault if configured, else account. |
 | `void stop()` | Idempotent. Closes the WebSocket, cancels timers and **drops pending actions without invoking their callbacks**. Called by the destructor. Orders on the venue are not canceled — call `cancelAll` first if desired. |
 | `bool isReady() const` | `true` between `onReady` and the next disconnect |
+
+**Readiness** requires all of: assets loaded, `clearinghouseState` answered, spot balances loaded (only when
+`loadSpotAssets`), WebSocket open and `subscriptionResponse` seen for `orderUpdates` and `userFills`.
+
+**Adoption of pre-existing orders.** On the **first** ready — and only when `adoptExistingOrders` is true — the
+client lists `frontendOpenOrders` once and takes over everything the venue already has resting for the account:
+orders left behind by a previous process, or placed in the UI. Each adopted order gets `external = !cloid` (an
+order with a cloid is treated as one of ours, one without gets the synthetic
+`Cloid{0xFFFFFFFFFFFFFFFF, oid}`), `filledSz = origSz − sz`, state `Open` or `PartiallyFilled`, and
+`createdMs` = the venue timestamp. Each adoption fires `onOrderUpdate`. Only `isTrigger` is recovered, not the
+`TriggerSpec` itself. A failure to list is logged as a warning and does not block readiness. On **later** readys
+(after a reconnect) the client reconciles the existing table instead ([§5.2](#52-orderstate-and-the-order-state-machine)).
 
 **Agent-wallet detection.** `start()` also queries `{"type":"userRole","user":<signer>}`. If the signing key is
 an API (agent) wallet and `accountAddress` was left empty, the client adopts the master account the venue
@@ -1015,7 +1192,11 @@ Equivalent to `placeOrders` with one request. Returns the cloid or the validatio
 
 ---
 
-`Result<std::vector<Cloid>> placeOrders(std::span<const OrderRequest> requests)` †
+```cpp
+Result<std::vector<Cloid>> placeOrders(std::span<const OrderRequest> requests,
+                                       OrderGrouping grouping = Grouping::Na,
+                                       const std::optional<BuilderFee>& builder = std::nullopt);  // †
+```
 
 - Validates **every** request first; if any fails, nothing is sent and that error is returned.
 - Validation (all `Error::Kind::Rejected`): `"no orders"`; `"duplicate cloid <cloid>"` (an order with that cloid is
@@ -1023,8 +1204,19 @@ Equivalent to `placeOrders` with one request. Returns the cloid or the validatio
   `"invalid price <px> for <coin> (nearest valid <px'>)"`; `"invalid size <sz> for <coin> (szDecimals <n>)"`;
   `"invalid trigger price <px>"`.
 - Creates one `Order` per request in `PendingNew` (no `onOrderUpdate` for this creation) and sends **one**
-  signed `order` action with grouping `"na"` containing all orders. Returns the cloids in request order.
-- Per-order outcomes are mapped by position from the response statuses.
+  signed `order` action containing all of them. Returns the cloids in request order.
+- Per-order outcomes are mapped by position from the response statuses; see the short-status-list rule in
+  [§5.2](#52-orderstate-and-the-order-state-machine).
+- `grouping` is an `OrderGrouping` ([§6.4](#64-wire-structs)):
+  - `Grouping::Na` (default) — independent orders.
+  - `Grouping::NormalTpsl` / `Grouping::PositionTpsl` — the trigger orders that **follow** a parent order in
+    `requests` become its take-profit / stop-loss children. `NormalTpsl` sizes the children like the parent;
+    `PositionTpsl` attaches them to the whole position.
+  - a `PriorityRate` — pays an order-priority fee for the whole action instead of grouping anything.
+- `builder` overrides `ExchangeConfig::builderFee` for this action only; pass `std::nullopt` to use the config
+  default. Passing a builder on an account that has not run `approveBuilderFee` makes the venue reject the action.
+- The whole batch is one signed action and one nonce. The venue charges **one IP-weight unit per 40 entries**,
+  but one address-budget unit **per entry** ([§5.10](#510-rate-limits-and-request-budget)).
 
 ---
 
@@ -1035,6 +1227,9 @@ Equivalent to `placeOrders` with one request. Returns the cloid or the validatio
 - Sets `cancelPending = true`.
 - Wire: `cancelByCloid` for orders placed by this client (works even while the order is `PendingNew`);
   `cancel` by `oid` for external orders.
+- The action carries the venue's `fast` flag (`"f":true`) when `ExchangeConfig::fastCancels` is set, **except**
+  for trigger orders — the venue rejects fast cancels of those, so an order with `isTrigger` is always cancelled
+  without the flag. When the flag is off it is omitted from the action entirely, not sent as `false`.
 
 ---
 
@@ -1043,35 +1238,50 @@ Equivalent to `placeOrders` with one request. Returns the cloid or the validatio
 - Error: `"unknown coin '<coin>'"`. No liveness check.
 - Sends a `cancel` action for `(asset, oid)`. If the oid belongs to a tracked order, it is marked `cancelPending`
   and updated from the result; otherwise the result is not applied to any order.
+- This path never sets the `fast` flag: without a local record there is no way to tell whether the oid is a
+  trigger order, and the venue would reject it.
 
 ---
 
 `Error cancelAll(std::string_view coin = {})` †
 
 - Collects every live order that is not already `cancelPending`, optionally restricted to `coin`, marks them
-  `cancelPending`, and sends at most **two** actions: one `cancelByCloid` batch for own orders and one `cancel`
-  batch (by oid) for external orders. External orders without an oid are skipped.
+  `cancelPending`, and sends them as two groups: `cancelByCloid` for own orders and `cancel` (by oid) for
+  external orders. External orders without an oid are skipped.
+- Each group is split into actions of at most **40 entries** — the venue's IP-weight unit — so a table of 200
+  own orders becomes five signed `cancelByCloid` actions.
+- The `fast` flag is applied per call, not per order: if **any** order in the sweep is a trigger order, every
+  action of that `cancelAll` is sent without the flag, because the venue would reject the batch containing it.
 - Returns an empty `Error` also when there was nothing to cancel.
 - Only locally known orders are canceled; orders placed elsewhere that were never seen in `orderUpdates` are not.
 
 ---
 
-`Error modify(const Cloid& cloid, Decimal newPx, Decimal newSz)` †
+```cpp
+Error modify(const Cloid& cloid, Decimal newPx, Decimal newSz,
+             std::optional<TriggerSpec> newTrigger = std::nullopt);  // †
+```
 
 - Errors: `"unknown order <cloid>"`, `"order is not live or being canceled"`, `"order not acknowledged yet"`
   (oid still 0), `"modify already pending"`, plus the price/size validation errors of `placeOrders`.
 - Sends `batchModify` with one entry targeting the current **oid**; the new order wire keeps the side, tif,
   reduce-only flag and cloid (cloid omitted for external orders). Sets `modifyPending = true`.
+- `newPx` is always the **limit** price. A trigger order keeps its `TriggerSpec` unless `newTrigger` is given;
+  pass `newTrigger` to move the trigger price or switch between market and limit execution. An adopted order
+  gets its `TriggerSpec` reconstructed from `frontendOpenOrders` (`triggerPx` plus the kind and market/limit
+  flag inferred from `orderType`), so amending one keeps it a trigger order.
 - On success the venue may assign a new oid; the cloid stays the same. See the stale-oid rules in [§5.2](#52-orderstate-and-the-order-state-machine).
 
 ---
 
 `Error scheduleCancel(std::optional<std::int64_t> timeMs, ActionCallback callback = {})`
 
-- Requires only `start()`. Error: `"client not started"`.
+- Requires only `start()`. Errors: `"client not started"`, and a local rejection when `timeMs` is less than
+  **5 s** in the future.
 - Sends `{"type":"scheduleCancel","time":timeMs}` (or without `time` to clear). Dead-man's switch: at `timeMs` (UTC
-  milliseconds, at least 5 s in the future) the venue cancels all open orders of the account. The venue limits the
-  number of triggers per day and may require a minimum traded volume before accepting it.
+  milliseconds) the venue cancels all open orders of the account.
+- Venue-side preconditions, both enforced remotely and reported as `Error{Venue}`: the account needs at least
+  **$1 000 000** of traded volume, and at most **10** triggers are allowed per UTC day.
 - The response is delivered to `callback` (successful responses have `type == "default"`).
 
 ---
@@ -1081,6 +1291,41 @@ Equivalent to `placeOrders` with one request. Returns the cloid or the validatio
 - Errors: `"unknown perp '<coin>'"` (unknown or a spot asset), `"leverage out of range (max <n>)"` (0 or above
   `AssetInfo::maxLeverage`).
 - Sends `{"type":"updateLeverage","asset":A,"isCross":…,"leverage":…}`.
+
+---
+
+`Error updateIsolatedMargin(std::string_view coin, Decimal usdc, ActionCallback callback = {})` †
+
+- Adds (positive `usdc`) or removes (negative `usdc`) isolated margin on a perp position.
+- Errors: `"unknown perp '<coin>'"`, and a local rejection when the amount is finer than **1e-6 USDC** —
+  the wire field is an integer count of micro-USDC and the SDK will not silently round.
+- Sends `{"type":"updateIsolatedMargin","asset":A,"isBuy":true,"ntli":N}` where `N = usdc · 10⁶`. `isBuy` is
+  always `true`; it is part of the venue's schema and does not select a side.
+
+---
+
+`Error reserveRequestWeight(std::uint64_t weight, ActionCallback callback = {})`
+
+- Requires only `start()`.
+- Sends `{"type":"reserveRequestWeight","weight":W}`, spending accumulated address-budget allowance to buy
+  additional IP request weight. See [§5.10](#510-rate-limits-and-request-budget).
+
+---
+
+`Error noop(ActionCallback callback = {})`
+
+- Requires only `start()`.
+- Sends `{"type":"noop"}`. No market effect; it consumes one nonce. Useful as a signing health check, and to
+  advance the signer's nonce window past nonces burned by another process.
+
+---
+
+`void infoOverWebSocket(std::string infoJson, std::function<void(const Result<std::string>&)> callback)`
+
+Sends an `/info` request over the private WebSocket (`{"method":"post","request":{"type":"info",…}}`) instead
+of HTTP, saving a round trip on the hot path, and hands the raw JSON payload of the response to the callback.
+Fails immediately with `Error{Transport}` when the socket is not open (the request is not queued) and with
+`Error{Timeout}` after `requestTimeoutMs`.
 
 ---
 
@@ -1100,7 +1345,8 @@ validation and no order-table effect; the parsed response goes to `callback`.
 | `const Address& accountAddress() const` | Configured master account, or the signer address |
 | `const Address& signerAddress() const` | Address derived from `privateKey` |
 | `InfoClient& info()` | The client's info connection — reuse it for your own queries |
-| `WsSession& session()` | The private WebSocket session: `subscriptions()`, `reconnectCount()`, `reconnectNow()` |
+| `WsSession& session()` | The private WebSocket session: `subscriptions()`, `reconnectCount()`, `reconnectNow()`, `clearSubscriptions()` |
+| `RateLimitStatus rateLimitStatus() const` | The account's request budget: the venue's figure from the last `userRateLimit` refresh plus everything submitted since ([§5.10](#510-rate-limits-and-request-budget)). `requestsCap == 0` means it has not been fetched yet. |
 | `Cloid nextCloid()` | `Cloid{sessionId, counter}`: a random 64-bit session id (never all-ones) and a counter starting at 1 |
 | `const Stats& stats() const` | Counters below |
 | `Signer::SigningStats signingStats() const` | Signatures by path: `precomputed` (nonce pool) / `deterministic` (RFC 6979) |
@@ -1112,7 +1358,9 @@ validation and no order-table effect; the parsed response goes to `callback`.
 | `actionErrors` | Actions completing with an `Error` |
 | `timeouts` | Of those, `Timeout` errors |
 | `fills` | Applied (non-historical, deduplicated) fills |
-| `reconciles` | `orderStatus` reconciliations started |
+| `reconciles` | Reconciliations started (a whole-table `frontendOpenOrders` sweep counts as one) |
+| `rateLimitHits` | HTTP `429` responses received; the request queue pauses after each ([§7.4](#74-httpclient)) |
+| `addressUnitsUsed` | Address-budget units submitted: one per order or cancel **entry**, one for any other action |
 
 A response arriving after its action already timed out, or after a disconnect, is ignored — reconciliation
 establishes the true state.
@@ -1140,12 +1388,26 @@ InfoClient(EventLoop& loop, std::string baseUrl, HttpClientOptions options = {})
 | `userFills(const Address& user, Callback<std::vector<Fill>>)` | `{"type":"userFills","user":"0x…"}` | Up to 2 000 most recent fills |
 | `l2Book(std::string_view coin, Callback<L2Snapshot>)` | `{"type":"l2Book","coin":"…"}` | `L2Snapshot` |
 | `allMids(Callback<std::vector<std::pair<std::string, Decimal>>>)` | `{"type":"allMids"}` | `(coin, mid)` pairs |
+| `spotBalances(const Address& user, Callback<std::vector<SpotBalance>>)` | `{"type":"spotClearinghouseState","user":"0x…"}` | Token balances (`total`, `hold`, `entryNtl`) |
+| `rateLimit(const Address& user, Callback<RateLimitStatus>)` | `{"type":"userRateLimit","user":"0x…"}` | `RateLimitStatus{cumVlm, requestsUsed, requestsCap}` — see [§5.10](#510-rate-limits-and-request-budget) |
+| `userFillsByTime(user, startTimeMs, endTimeMs, Callback<std::vector<Fill>>)` | `{"type":"userFillsByTime","user":"0x…","startTime":S[,"endTime":E]}` (`endTime` omitted when ≤ 0) | Fills in the range, **oldest first** — the way to recover fills missed during a disconnect |
+| `userFunding(user, startTimeMs, endTimeMs, Callback<std::vector<FundingPayment>>)` | `{"type":"userFunding","user":"0x…","startTime":S[,"endTime":E]}` | Funding paid / received |
+| `historicalOrders(const Address& user, Callback<std::vector<OrderStatusInfo>>)` | `{"type":"historicalOrders","user":"0x…"}` | Terminal orders, most recent first |
+| `perpContexts(Callback<std::vector<PerpContext>>)` | `{"type":"metaAndAssetCtxs"}` | Per-perp metadata **and** live context (funding, mark, oracle, open interest, day volume). The response is the pair `[{universe:[…]}, [ctx…]]`; the two arrays are zipped by index. |
+| `fundingHistory(coin, startTimeMs, endTimeMs, Callback<std::vector<FundingRate>>)` | `{"type":"fundingHistory","coin":"…","startTime":S[,"endTime":E]}` | Realised hourly funding of one coin |
+| `predictedFundings(Callback<std::vector<PredictedFunding>>)` | `{"type":"predictedFundings"}` | Funding predicted by other venues, flattened from `[[coin, [[venue, {…}], …]], …]` into one row per (coin, venue) — the input for cross-venue carry |
+| `candles(coin, interval, startTimeMs, endTimeMs, Callback<std::vector<Candle>>)` | `{"type":"candleSnapshot","req":{"coin":"…","interval":"…","startTime":S[,"endTime":E]}}` | OHLCV bars |
 | `raw(std::string requestJson, Callback<std::string>)` | Your body | Raw response body |
 | `HttpClient& http()` | | Underlying connection |
 
 Errors: transport/timeout/HTTP errors are passed through (for typed requests with a non-empty body, the first 300
 characters of the body are appended to the message); invalid JSON → `Parse`; unexpected top-level shape (e.g.
 array expected) → `Parse`.
+
+`raw()` is the escape hatch for every `/info` request this table does not cover (`vaultDetails`,
+`userTwapSliceFills`, `delegations`, `tokenDetails`, …): the response body is handed over unparsed. Coverage of
+the venue API — what is typed, what needs `raw`, and what is deliberately absent — is tabulated in
+[COVERAGE.md](COVERAGE.md).
 
 ### 5.7 AssetRegistry and AssetInfo (price/size rules)
 
@@ -1157,6 +1419,7 @@ array expected) → `Parse`.
 | `asset` | `std::uint32_t` | Wire asset id: perp universe index, or `10000 + spot index` |
 | `kind` | `AssetInfo::Kind` (`Perp`, `Spot`) | |
 | `szDecimals` | `int` | Size precision |
+| `baseToken` | `std::string` | Spot only: the base token of the pair (`"PURR"` for `"PURR/USDC"`). This is the name spot **balances** are reported under, so it is what maps a `spotClearinghouseState` entry onto a tradable pair. Empty for perps. |
 | `maxLeverage` | `std::uint32_t` | Perps |
 | `onlyIsolated` | `bool` | Perps |
 | `isDelisted` | `bool` | Perps |
@@ -1279,6 +1542,43 @@ The venue additionally requires an order value of at least **10 USDC** (not chec
 | `positions` | `assetPositions[]` |
 | `timeMs` | `time` |
 
+**`SpotBalance`** (`spotClearinghouseState`)
+
+| Field | Type | Wire |
+|---|---|---|
+| `coin` | `std::string` | `coin` — the **token** name (`"USDC"`, `"PURR"`), matching `AssetInfo::baseToken` |
+| `token` | `std::uint32_t` | `token` — token index |
+| `total` | `Decimal` | `total` |
+| `hold` | `Decimal` | `hold` — reserved by resting orders |
+| `entryNtl` | `Decimal` | `entryNtl` |
+
+**`RateLimitStatus`** (`userRateLimit`)
+
+| Member | Type | Description |
+|---|---|---|
+| `cumVlm` | `Decimal` | Cumulative traded volume in USDC |
+| `requestsUsed` | `std::uint64_t` | `nRequestsUsed` |
+| `requestsCap` | `std::uint64_t` | `nRequestsCap` — 10 000 + 1 per USDC of volume; 0 = never fetched |
+| `std::uint64_t remaining() const` | | `requestsCap − requestsUsed`, saturating at 0 |
+
+**`Candle`** (`candleSnapshot` and the `candle` subscription) — `coin`, `interval`, `openTimeMs`, `closeTimeMs`,
+`open`, `close`, `high`, `low`, `volume` (base-asset), `trades`.
+
+**`FundingRate`** (`fundingHistory`) — `coin`, `rate` (hourly), `premium`, `timeMs`.
+
+**`PredictedFunding`** (`predictedFundings`) — `coin`, `venue` (`"HlPerp"`, `"BinPerp"`, `"BybitPerp"`, …),
+`rate`, `nextFundingTimeMs`, `intervalHours`. One row per (coin, venue) pair.
+
+**`FundingPayment`** (`userFunding`) — `timeMs`, `coin`, `usdc` (negative = paid), `szi` (signed position at the
+time), `rate`, `hash`.
+
+**`PerpContext`** (`metaAndAssetCtxs`) — metadata and live context of one perp joined into one row: `coin`,
+`asset`, `szDecimals`, `maxLeverage`, `funding` (hourly), `openInterest`, `premium`, `oraclePx`, `markPx`,
+`midPx`, `prevDayPx`, `dayNtlVlm`, `dayBaseVlm`, `impactBid`, `impactAsk`.
+
+**`UserRole`** (`userRole`) — `role` (`"user"`, `"agent"`, `"vault"`, `"subAccount"`, `"missing"`, …),
+`master` (`std::optional<Address>`, set when `role == "agent"`), and `bool isAgent() const`.
+
 **`L2Snapshot`** — `coin`, `timeMs`, `std::vector<BookLevel> bids`, `asks`.
 
 ### 5.9 ExchangeResponse
@@ -1312,9 +1612,44 @@ Result<ExchangeResponse> parseExchangeResponse(std::string_view body);
 | any other string / object | `Error` with the string / `"unrecognised status: …"` |
 
 - `{"status":"ok","response":{…}}` → value; statuses from `response.data.statuses` (empty for `type == "default"`).
+- Some actions report a single `response.data.status` instead of a `statuses` array — `twapOrder` and
+  `twapCancel` do. When `statuses` is absent and `status` is present, that one status becomes the single element
+  of `statuses`: the string `"success"` maps to `Success`, any other string to `Error` carrying that string, an
+  object with an `error` field to `Error`, and any other object (e.g. `{"running":{"twapId":…}}`) to `Success`
+  with the object kept verbatim in `error` so the caller can read the id out of it.
 - `{"status":"err","response":"<text>"}` (or any non-`ok` status) → `Error{Venue}` with the text (or the minified
   body when `response` is not a string).
 - Invalid JSON → `Error{Parse}` with the first 200 characters of the body.
+
+### 5.10 Rate limits and request budget
+
+Hyperliquid meters requests two ways at once, and they behave very differently.
+
+**IP weight** — the familiar per-source limit: about **1 200 weight units per minute per IP**, shared by `/info`
+and `/exchange`. Most `/info` requests weigh 2–20. An `order` or `cancel` action costs one unit per **40**
+entries, which is why batching matters and why `cancelAll` chunks at 40. This SDK does not track IP weight; keep
+polling off the hot path and take state from the WebSocket feeds instead.
+
+**Address budget** — a per-account allowance that order flow, not bandwidth, consumes. The venue grants
+`10 000 + 1 request per USDC of cumulative traded volume`, and counts **one unit per order or cancel entry** —
+a 40-order batch costs 1 IP unit but 40 address units. When the budget is exhausted the account is throttled to
+**one request per 10 seconds**, which is fatal for a quoting strategy. An action rejected for a stale
+`expiresAfter` costs **5×** the normal amount.
+
+The client tracks both sides of this:
+
+| Piece | Behaviour |
+|---|---|
+| `Stats::addressUnitsUsed` | Incremented on every submitted action: by the number of order / cancel entries, or by 1 for any other action |
+| `ExchangeConfig::rateLimitRefreshMs` | Period of the `userRateLimit` refresh (default 60 s, 0 = never). The **first** refresh is armed at 200 ms after `start()`, so the budget is known before serious order flow begins. |
+| `rateLimitStatus()` | `requestsUsed` = the venue's figure at the last refresh **plus** the units submitted since; `requestsCap` and `cumVlm` come straight from the venue. `requestsCap == 0` means no refresh has succeeded yet. |
+| `ExchangeConfig::rateLimitWarnFraction` | When `remaining() / requestsCap` falls below this (default 0.1), one `Warn` line is logged. The warning re-arms once the ratio recovers, so it cannot spam. |
+| `reserveRequestWeight(weight)` | Spends accumulated address budget to buy additional IP request weight — the way to pay for a burst out of volume already traded |
+| `Stats::rateLimitHits` | HTTP `429` responses. The HTTP queue pauses itself on each one; see [§7.4](#74-httpclient). |
+
+Nothing here throttles the client: it observes and warns, and the strategy decides. A market maker should watch
+`rateLimitStatus().remaining()` and cut quote churn before it reaches zero, because recovery requires trading
+volume, and trading is exactly what the throttle prevents.
 
 ---
 
@@ -1463,6 +1798,41 @@ smallest encoding is always chosen.
 | `trigger` | `std::optional<TriggerSpec>` | none | `t.trigger` |
 | `cloid` | `std::optional<Cloid>` | none | `c` |
 
+**`Grouping` / `PriorityRate` / `OrderGrouping`**
+
+```cpp
+enum class Grouping : std::uint8_t { Na, NormalTpsl, PositionTpsl };
+std::string_view groupingWire(Grouping) noexcept;      // "na" / "normalTpsl" / "positionTpsl"
+struct PriorityRate { std::uint32_t rate{}; };         // fraction of 1e8, e.g. 10000 = 1 bp
+using OrderGrouping = std::variant<Grouping, PriorityRate>;
+```
+
+`Grouping` controls how the venue links the orders of one action. `NormalTpsl` and `PositionTpsl` attach
+take-profit / stop-loss children to a parent: send the parent first and the trigger orders after it **in the same
+action**. `PositionTpsl` attaches them to the whole position rather than to one order.
+
+A `PriorityRate` is not a grouping at all — it occupies the same wire field to buy **order priority**, the venue's
+alternative to co-location. `rate` is a fraction of 1e8 of the filled notional (IOC) or the resting notional
+(ALO), and it is charged from the account's **undelegated staking balance**, not from margin. The venue accepts
+it only when every order in the action is IOC, or every order is a non-reduce-only ALO, and no order is on an
+outcome asset. Empirically it buys roughly **45 ms of end-to-end latency per basis point** (`rate = 10000`), up
+to about 8 bps.
+
+The two forms produce different wire shapes: a `Grouping` is a msgpack **string**, a `PriorityRate` a msgpack
+**map** `{"p": rate}`. They hash differently, so a golden vector for one says nothing about the other.
+
+**`BuilderFee`**
+
+```cpp
+struct BuilderFee { Address address{}; std::uint32_t feeTenthsOfBps{}; };
+```
+
+Routes a share of the trading fee to a builder address. Encoded as an action-level
+`"builder":{"b":"0x<lower-case address>","f":<tenths of a bp>}` — so `feeTenthsOfBps = 10` is 1 bp. Adding it
+grows the `order` action's map from **3 to 4 keys**, which changes the action hash; the account must have run
+`approveBuilderFee` once (an EIP-712 user-signed action this SDK does not implement, see
+[COVERAGE.md](COVERAGE.md)).
+
 **`CancelWire`** `{asset, oid}` · **`CancelByCloidWire`** `{asset, cloid}` ·
 **`ModifyWire`** `{std::variant<std::uint64_t, Cloid> target, OrderWire order}` ·
 **`EncodedAction`** `{std::vector<std::uint8_t> msgpack; std::string json;}` — `msgpack` is hashed and signed,
@@ -1472,16 +1842,30 @@ smallest encoding is always chosen.
 
 | Function | JSON produced (key order identical in msgpack) |
 |---|---|
-| `EncodedAction actions::order(std::span<const OrderWire> orders, std::string_view grouping = "na")` | `{"type":"order","orders":[{"a":0,"b":true,"p":"50000","s":"0.001","r":false,"t":{"limit":{"tif":"Alo"}},"c":"0x…"}],"grouping":"na"}` |
+| `EncodedAction order(std::span<const OrderWire> orders, OrderGrouping grouping = Grouping::Na, const std::optional<BuilderFee>& builder = std::nullopt)` | `{"type":"order","orders":[{"a":0,"b":true,"p":"50000","s":"0.001","r":false,"t":{"limit":{"tif":"Alo"}},"c":"0x…"}],"grouping":"na"}` |
 | (trigger order) | `…"t":{"trigger":{"isMarket":true,"triggerPx":"60000.5","tpsl":"sl"}}…` |
-| `EncodedAction actions::cancel(std::span<const CancelWire>)` | `{"type":"cancel","cancels":[{"a":0,"o":123}]}` |
-| `EncodedAction actions::cancelByCloid(std::span<const CancelByCloidWire>)` | `{"type":"cancelByCloid","cancels":[{"asset":0,"cloid":"0x…"}]}` |
-| `EncodedAction actions::batchModify(std::span<const ModifyWire>)` | `{"type":"batchModify","modifies":[{"oid":11,"order":{…}}]}` — `oid` is a number, or a cloid string when `target` holds a `Cloid` |
-| `EncodedAction actions::scheduleCancel(std::optional<std::uint64_t> timeMs)` | `{"type":"scheduleCancel","time":1700000060000}` or `{"type":"scheduleCancel"}` |
-| `EncodedAction actions::updateLeverage(std::uint32_t asset, bool isCross, std::uint32_t leverage)` | `{"type":"updateLeverage","asset":3,"isCross":false,"leverage":7}` |
+| (priority rate) | `…],"grouping":{"p":10000}}` — a map, not a string |
+| (builder fee) | `…,"grouping":"na","builder":{"b":"0x1234…","f":10}}` |
+| `EncodedAction cancel(std::span<const CancelWire>, bool fast = false)` | `{"type":"cancel","cancels":[{"a":0,"o":123}]}`, plus `,"f":true` when `fast` |
+| `EncodedAction cancelByCloid(std::span<const CancelByCloidWire>, bool fast = false)` | `{"type":"cancelByCloid","cancels":[{"asset":0,"cloid":"0x…"}]}`, plus `,"f":true` when `fast` |
+| `EncodedAction batchModify(std::span<const ModifyWire>)` | `{"type":"batchModify","modifies":[{"oid":11,"order":{…}}]}` — `oid` is a number, or a cloid string when `target` holds a `Cloid` |
+| `EncodedAction scheduleCancel(std::optional<std::uint64_t> timeMs)` | `{"type":"scheduleCancel","time":1700000060000}` or `{"type":"scheduleCancel"}` |
+| `EncodedAction updateLeverage(std::uint32_t asset, bool isCross, std::uint32_t leverage)` | `{"type":"updateLeverage","asset":3,"isCross":false,"leverage":7}` |
+| `Result<EncodedAction> updateIsolatedMargin(std::uint32_t asset, Decimal usdc)` | `{"type":"updateIsolatedMargin","asset":3,"isBuy":true,"ntli":1500000}` — `ntli` is a **signed** integer count of micro-USDC (`usdc.raw() / 100`). Returns `Error{Rejected}` when `usdc` is finer than 1e-6. `isBuy` is a constant of the venue's schema; the sign of `ntli` decides add vs remove. |
+| `EncodedAction noop()` | `{"type":"noop"}` — no market effect, burns one nonce |
+| `EncodedAction reserveRequestWeight(std::uint64_t weight)` | `{"type":"reserveRequestWeight","weight":100}` |
 
 Order wire key order is `a b p s r t [c]`, matching the reference SDK. Batches may contain many entries; the
-venue counts one rate-limit unit per 40 entries.
+venue counts one IP-weight unit per 40 entries (but one address-budget unit per entry —
+[§5.10](#510-rate-limits-and-request-budget)).
+
+**The `fast` flag on cancels** is action-level, not per entry, and it is **omitted entirely** when false: the
+msgpack map header is 2 keys without it and 3 with it, so a `fast` cancel and a normal cancel hash differently.
+The venue **rejects fast cancels of trigger orders**, which is why `ExchangeClient` drops the flag whenever a
+trigger order is in the batch ([§5.5](#55-exchangeclient)).
+
+`updateIsolatedMargin` is the only builder that returns a `Result` — every other one always succeeds, because
+validation happened when the wire structs were built.
 
 ### 6.6 NonceGenerator
 
@@ -1491,7 +1875,14 @@ class NonceGenerator { public: std::uint64_t next() noexcept; };
 
 Returns `max(system wall clock in ms, last + 1)` — strictly increasing, lock-free, thread-safe. HL accepts a nonce
 if it is larger than the smallest of the signer's 100 most recent nonces, not already used, and within
-(now − 2 days, now + 1 day). Use one generator per signing key per process.
+(now − 2 days, now + 1 day).
+
+**Nonces are tracked per signing key, not per client.** Two `ExchangeClient`s that share a private key — one for
+the master account and one for a sub-account, or one for perps and one for spot — must therefore share one
+generator, or the slower of the two will eventually submit a nonce the venue has already seen. Pass the same
+`std::shared_ptr<NonceGenerator>` in `ExchangeConfig::nonces` ([§5.1](#51-exchangeconfig-and-actiontransport));
+leaving it empty gives each client a private generator, which is correct only when each has its own key.
+`NonceGenerator` is thread-safe, so sharing one across event loops is fine.
 
 ### 6.7 RequestBuilder
 
@@ -1595,6 +1986,7 @@ public:
 | `void stop()` | Close, cancel timers, stop reconnecting (destructor calls it) |
 | `void subscribe(std::string subscriptionJson)` | Register a subscription object; sends `{"method":"subscribe","subscription":…}` now if open; replayed on every reconnect. Exact-string duplicates are ignored. |
 | `void unsubscribe(std::string_view subscriptionJson)` | Remove from the registry and send `unsubscribe` if open (no-op if not registered) |
+| `void clearSubscriptions()` | Empty the registry, sending an `unsubscribe` for each entry while connected. Used when the user a session subscribes for changes: `ExchangeClient` calls it before resubscribing the private streams to a newly discovered master account. |
 | `const std::vector<std::string>& subscriptions() const` | Registry |
 | `void reconnectNow(std::string_view reason = "manual reconnect")` | Close and reconnect immediately (no backoff delay). The close is reported to the listener exactly like a spontaneous disconnect, so subscriptions are replayed and dependent state (readiness, reconciliation) is rebuilt. |
 | `bool send(std::string_view text)` | Raw text frame; `false` if not open |
@@ -1652,6 +2044,10 @@ error, peer close).
 | `connectTimeoutMs` | `std::int64_t` | `10000` | Limit for TCP connect + TLS handshake. With several resolved addresses the budget is split across them (≥ 1.5 s each). |
 | `tcpNoDelay` | `bool` | `true` | Disable Nagle |
 
+One `SSL_CTX` is created **per distinct verification setting** (the `verifyPeer` / `caFile` pair) and shared by
+every stream in the process: loading a CA bundle costs milliseconds and would otherwise be repeated on each
+reconnect. The contexts live for the process; a `TlsStream` does not free the one it used.
+
 TLS 1.2 minimum, SNI and host-name verification enabled. If certificates cannot be loaded a Warn line is logged and
 handshakes will fail verification — set `caFile` or `SSL_CERT_FILE` (e.g. `/etc/ssl/certs/ca-certificates.crt`,
 `/etc/pki/tls/certs/ca-bundle.crt`) on minimal systems and containers.
@@ -1683,6 +2079,7 @@ public:
 | `tls` | `TlsOptions` | defaults | |
 | `requestTimeoutMs` | `std::int64_t` | `10000` | Deadline per request from the moment it is written |
 | `idleTimeoutMs` | `std::int64_t` | `50000` | Close the keep-alive connection after this long without requests |
+| `defaultRateLimitPauseMs` | `std::int64_t` | `1000` | How long to pause the queue after a `429` that carries no `Retry-After` header |
 
 | Member | Description |
 |---|---|
@@ -1691,6 +2088,8 @@ public:
 | `void postJson(std::string_view path, std::string body, Callback)` | Queue `POST <prefix><path>` with `Content-Type: application/json` |
 | `void cancelAll(std::string_view reason = "canceled")` | Close the connection and fail every queued request with `Transport` |
 | `std::size_t pending() const` | Queued + in-flight |
+| `std::uint64_t rateLimitHits() const` | Number of `429` responses seen |
+| `std::int64_t pausedUntilMs() const` | `EventLoop::nowMs()` until which sending is paused after a `429`; 0 = not paused |
 | `const std::string& baseUrl() const` | |
 
 Semantics:
@@ -1702,6 +2101,10 @@ Semantics:
 - Timeout: the connection is closed (so a late response cannot be attributed to the next request) and the
   request fails with `Timeout`.
 - Non-2xx responses call back with `Error{Http, status}` **and** the response (body available).
+- **HTTP 429**: `rateLimitHits()` is incremented, a Warn line is logged, and the queue is paused until
+  `now + Retry-After` (or `now + defaultRateLimitPauseMs` when the header is absent). The 429'd request is
+  **not** replayed — signed actions are not idempotent — it is completed with `Error{Http, 429}` and its body,
+  so the caller decides. Queued requests behind it resume when the pause expires.
 - `Connection: close` responses close the connection after delivery.
 - A resolve failure fails the head request immediately with `Transport`.
 
@@ -1710,7 +2113,12 @@ Semantics:
 `#include "hl/net/HttpCodec.h"`
 
 ```cpp
-struct HttpResponse { int status{0}; std::string body{}; bool keepAlive{true}; };
+struct HttpResponse {
+    int status{0};
+    std::string body{};
+    bool keepAlive{true};
+    int retryAfterSeconds{0};  // `Retry-After` header, 0 if absent; set on 429 / 503
+};
 ```
 
 | Member | Description |
@@ -1724,6 +2132,8 @@ struct HttpResponse { int status{0}; std::string body{}; bool keepAlive{true}; }
 
 Supports Content-Length, chunked (extensions and trailers ignored) and read-until-close bodies; 1xx/204/304 have no
 body; HTTP/1.0 defaults to non-keep-alive; `Connection: close|keep-alive` honoured; response head limited to 64 KiB.
+A `Retry-After` header given as a delay in seconds is parsed into `retryAfterSeconds`; the HTTP-date form is not
+interpreted and leaves the field at 0.
 
 ### 7.6 WebSocket frame codec
 
@@ -2004,7 +2414,10 @@ Venue message texts are controlled by Hyperliquid and may change; match on subst
 | `Order could not immediately match against any resting orders.` (IOC) | per order | `Rejected` + `lastError` |
 | `Order was never placed, already canceled, or filled.` | per cancel / modify | `cancelPending`/`modifyPending` cleared, `lastError` set, order **reconciled** via `orderStatus` |
 | `User or API Wallet 0x… does not exist.` | whole action | Action `Error{Venue}`; pending orders → `Rejected` with the message. The address is the one the venue **recovered from the signature** — if it differs from `signerAddress()` your signing input is wrong; if it matches, the wallet is not funded / the agent is not authorised. |
-| `Too many cumulative requests sent …` / rate limit | whole action | `Error{Venue}` (or `Error{Http, 429}`); orders → `Rejected` |
+| `Too many cumulative requests sent …` / rate limit | whole action | `Error{Venue}` (or `Error{Http, 429}`, which also pauses the HTTP queue and bumps `Stats::rateLimitHits`); orders → `Rejected` |
+| `Cannot fast cancel trigger order` (and similar) | whole action | `Error{Venue}`. Only reachable via `submitAction` / `actions::cancel(…, true)` — `ExchangeClient` drops the `fast` flag for trigger orders. |
+| Builder-fee errors (`Builder fee not approved`, `Builder fee too high`) | whole action | `Error{Venue}`; orders → `Rejected`. The account must run `approveBuilderFee` once before any `builderFee` is accepted. |
+| `scheduleCancel` volume / trigger-count refusals | whole action | `Error{Venue}` delivered to the `ActionCallback` |
 | Nonce errors (duplicate / out of window) | whole action | `Error{Venue}`; orders → `Rejected` |
 | WebSocket post `{"type":"error","payload":"…"}` | whole action | `Error{Venue}` with the payload text |
 | `orderUpdates` statuses such as `marginCanceled`, `reduceOnlyCanceled`, `selfTradeCanceled`, `scheduledCancel` | per order | `Canceled`, `lastError` = status text |
@@ -2044,8 +2457,10 @@ Venue message texts are controlled by Hyperliquid and may change; match on subst
 | `order is not live or being canceled` | `modify` |
 | `order not acknowledged yet` | `modify` |
 | `modify already pending` | `modify` |
-| `unknown perp '<coin>'` | `updateLeverage` |
+| `unknown perp '<coin>'` | `updateLeverage`, `updateIsolatedMargin` |
 | `leverage out of range (max <n>)` | `updateLeverage` |
+| `updateIsolatedMargin: <amount> is finer than 1e-6 USDC` | `updateIsolatedMargin` (from `actions::updateIsolatedMargin`) |
+| scheduled-cancel time less than 5 s in the future | `scheduleCancel` |
 
 ---
 
@@ -2056,17 +2471,21 @@ for current values.
 
 | Area | Limit / behaviour | Library support |
 |---|---|---|
-| Exchange actions (address-based) | Budget grows with traded volume: roughly 1 request per 1 USDC of cumulative volume, plus an initial buffer (≈10 000 requests). Unfilled quoting consumes budget without earning it. | Batch with `placeOrders` / `cancelAll`; amend with `modify` instead of cancel + place |
-| Batching | One `order`/`cancel`/`batchModify` action counts as one unit per 40 entries | `placeOrders`, `cancelAll`, `actions::*` accept spans |
+| Exchange actions (address-based) | Budget = **10 000 + 1 request per USDC** of cumulative traded volume, counted **per order or cancel entry** in a batch. Exhausting it throttles the account to **one request per 10 s**. Unfilled quoting consumes budget without earning it. | `rateLimitStatus()`, `Stats::addressUnitsUsed`, the `rateLimitWarnFraction` warning and `reserveRequestWeight` ([§5.10](#510-rate-limits-and-request-budget)); batch with `placeOrders` / `cancelAll`; amend with `modify` instead of cancel + place |
+| Batching | One `order`/`cancel`/`batchModify` action counts as one **IP-weight** unit per 40 entries (address budget is still per entry) | `placeOrders`, `cancelAll` (chunks at 40), `actions::*` accept spans |
+| Stale `expiresAfter` | An action the venue drops for an expired `expiresAfter` costs **5×** the normal address budget | Set `ExchangeConfig::actionExpiryMs` above your worst-case round-trip, or leave it off |
+| Order priority fee | `grouping:{"p":rate}`, `rate` a fraction of 1e8, charged from the **undelegated staking balance**. Accepted only when every order in the action is IOC, or every order is a non-reduce-only ALO, and none is on an outcome asset. ≈45 ms of latency bought per bp, up to ≈8 bps. | `PriorityRate` passed to `placeOrders` / `actions::order` |
 | REST weight (IP-based) | ~1 200 weight per minute across `/info` and `/exchange`; info requests weigh ~2–20 each (`l2Book`, `allMids`, `clearinghouseState`, `orderStatus` are light; `userFills` and others heavier) | Avoid polling; use WebSocket feeds |
 | WebSocket | ~100 connections, ~1 000 subscriptions and ~2 000 client messages per minute per IP; limited concurrent in-flight posts | `ExchangeClient` uses one connection for posts + 2 subscriptions; `MarketDataClient` one connection |
 | Idle WebSocket | Server closes connections with no client messages for 60 s | `WsSession` pings every `pingIntervalMs` (20 s) |
 | Minimum order value | 10 USDC | Not checked locally |
 | Prices / sizes | 5 significant figures, `6 − szDecimals` (perp) / `8 − szDecimals` (spot) decimals; sizes `szDecimals` | `AssetInfo::roundPx` / `roundSz`, validated in `placeOrders` / `modify` |
-| Nonces | Unique among the signer's 100 highest nonces, within (now − 2 days, now + 1 day) | `NonceGenerator`; run one signing key per process, keep the clock synced (NTP) |
+| Nonces | Unique among the signer's 100 highest nonces, within (now − 2 days, now + 1 day). Tracked **per signing key**, not per client. | `NonceGenerator`; share one via `ExchangeConfig::nonces` across clients that use the same key; keep the clock synced (NTP) |
 | Asset ids | Positions in the `meta` universe; **differ between mainnet and testnet**; spot ids are `10000 + index` | Always resolve names via `AssetRegistry` |
 | Funding | Hourly | `AssetCtxMsg::funding` |
-| `scheduleCancel` | Time ≥ now + 5 s; limited number of triggers per day; may require prior trading volume | `ExchangeClient::scheduleCancel` |
+| `scheduleCancel` | Time ≥ now + 5 s (checked locally); requires **$1 000 000** of traded volume and allows at most **10** triggers per UTC day (both enforced by the venue) | `ExchangeClient::scheduleCancel` |
+| Fast cancels | The `fast` flag prioritises a cancel in the mempool, but the venue **rejects** it for trigger orders | `ExchangeConfig::fastCancels` (on by default, dropped automatically for trigger orders) |
+| Builder codes | An action-level fee share routed to an approved builder, in tenths of a bp; needs a one-time `approveBuilderFee` from the master account | `ExchangeConfig::builderFee`, the `builder` argument of `placeOrders` |
 | Agent wallets | Can trade, cannot withdraw; revocable | `ExchangeConfig::privateKey` + `accountAddress` |
 | Vaults / sub-accounts | Actions carry `vaultAddress`; streams and queries use the vault address | `ExchangeConfig::vaultAddress` |
 | Latency | Orders are sequenced by HyperBFT consensus; acknowledgements typically arrive in hundreds of milliseconds | Local overhead per signed order ≈ 45 µs (dominated by ECDSA) |

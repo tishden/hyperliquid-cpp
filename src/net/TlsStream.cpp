@@ -13,6 +13,9 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <map>
+#include <mutex>
+#include <utility>
 #include <fcntl.h>
 
 #include "hl/core/Log.h"
@@ -34,7 +37,27 @@ std::string opensslError() {
     return buf;
 }
 
-SSL_CTX* makeContext(const TlsOptions& options) {
+SSL_CTX* makeContextImpl(const TlsOptions& options);
+
+// One SSL_CTX per distinct verification setting, shared by every stream in the process: loading the
+// CA store costs milliseconds and a typical application opens several connections.
+SSL_CTX* sharedContext(const TlsOptions& options) {
+    static std::mutex mutex;
+    static std::map<std::pair<bool, std::string>, SSL_CTX*> contexts;
+    const std::lock_guard<std::mutex> lock(mutex);
+    const auto key = std::make_pair(options.verifyPeer, options.caFile);
+    const auto it = contexts.find(key);
+    if (it != contexts.end()) {
+        return it->second;
+    }
+    SSL_CTX* ctx = makeContextImpl(options);
+    if (ctx != nullptr) {
+        contexts.emplace(key, ctx);
+    }
+    return ctx;
+}
+
+SSL_CTX* makeContextImpl(const TlsOptions& options) {
     SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
     if (ctx == nullptr) {
         return nullptr;
@@ -63,10 +86,7 @@ TlsStream::TlsStream(EventLoop& loop, TlsStreamListener& listener, TlsOptions op
 }
 
 TlsStream::~TlsStream() {
-    release();
-    if (ctx_ != nullptr) {
-        SSL_CTX_free(ctx_);
-    }
+    release();  // ctx_ is process-wide and shared; it is not freed here
 }
 
 bool TlsStream::connect(const std::string& host, std::uint16_t port, bool secure) {
@@ -87,35 +107,33 @@ bool TlsStream::connect(const std::string& host, std::uint16_t port, bool secure
         state_ = State::Closed;
         return false;
     }
-    addrs_.clear();
-    addrLens_.clear();
-    addrFamilies_.clear();
+    endpoints_.clear();
     for (addrinfo* ai = result; ai != nullptr; ai = ai->ai_next) {
-        if (ai->ai_addrlen > sizeof(std::array<char, 128>)) {
+        Endpoint endpoint;
+        if (ai->ai_addrlen > endpoint.address.size()) {
             continue;
         }
-        std::array<char, 128> blob{};
-        std::memcpy(blob.data(), ai->ai_addr, ai->ai_addrlen);
-        addrs_.push_back(blob);
-        addrLens_.push_back(static_cast<std::uint32_t>(ai->ai_addrlen));
-        addrFamilies_.push_back(ai->ai_family);
+        std::memcpy(endpoint.address.data(), ai->ai_addr, ai->ai_addrlen);
+        endpoint.length = static_cast<std::uint32_t>(ai->ai_addrlen);
+        endpoint.family = ai->ai_family;
+        endpoints_.push_back(endpoint);
     }
     ::freeaddrinfo(result);
-    if (addrs_.empty()) {
+    if (endpoints_.empty()) {
         state_ = State::Closed;
         return false;
     }
     // Rotate the first address across connects so one bad edge address cannot stall every reconnect.
-    addrCursor_ = rotation_++ % addrs_.size();
-    attemptsLeft_ = addrs_.size();
+    addrCursor_ = rotation_++ % endpoints_.size();
+    attemptsLeft_ = endpoints_.size();
     return startAttempt({});
 }
 
 bool TlsStream::startAttempt(std::string reason) {
     while (attemptsLeft_ > 0) {
         --attemptsLeft_;
-        const std::size_t idx = addrCursor_++ % addrs_.size();
-        const int fd = ::socket(addrFamilies_[idx], SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+        const Endpoint& endpoint = endpoints_[addrCursor_++ % endpoints_.size()];
+        const int fd = ::socket(endpoint.family, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
         if (fd < 0) {
             reason = std::string{"socket: "} + std::strerror(errno);
             continue;
@@ -124,7 +142,7 @@ bool TlsStream::startAttempt(std::string reason) {
             const int one = 1;
             ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
         }
-        if (::connect(fd, reinterpret_cast<const sockaddr*>(addrs_[idx].data()), addrLens_[idx]) != 0 &&
+        if (::connect(fd, reinterpret_cast<const sockaddr*>(endpoint.address.data()), endpoint.length) != 0 &&
             errno != EINPROGRESS) {
             reason = std::string{"connect: "} + std::strerror(errno);
             ::close(fd);
@@ -135,7 +153,7 @@ bool TlsStream::startAttempt(std::string reason) {
         currentMask_ = EPOLLOUT | EPOLLIN | EPOLLRDHUP;
         loop_.add(fd_, currentMask_, this);
         const std::int64_t perAddress =
-            std::max<std::int64_t>(1'500, options_.connectTimeoutMs / static_cast<std::int64_t>(addrs_.size()));
+            std::max<std::int64_t>(1'500, options_.connectTimeoutMs / static_cast<std::int64_t>(endpoints_.size()));
         connectTimer_ = loop_.addTimer(attemptsLeft_ > 0 ? perAddress : options_.connectTimeoutMs, [this] {
             connectTimer_ = 0;
             if (state_ == State::Connecting) {
@@ -160,8 +178,7 @@ void TlsStream::nextAddress(std::string_view reason) {
             return;
         }
     }
-    state_ = State::Connecting;  // let fail() report exactly once
-    fail(reason);
+    fail(reason);  // state is still Connecting here, so fail() reports exactly once
 }
 
 void TlsStream::closeSocket() noexcept {
@@ -183,6 +200,11 @@ bool TlsStream::send(std::string_view bytes) {
     if (outboxOffset_ != 0 && outboxOffset_ == outbox_.size()) {
         outbox_.clear();
         outboxOffset_ = 0;
+    }
+    if (options_.maxOutboxBytes != 0 && pendingBytes() + bytes.size() > options_.maxOutboxBytes) {
+        fail("send buffer limit exceeded (" + std::to_string(pendingBytes() + bytes.size()) + " bytes): the peer "
+             "is not reading");
+        return false;
     }
     outbox_.insert(outbox_.end(), bytes.begin(), bytes.end());
     if (state_ == State::Open) {
@@ -271,7 +293,7 @@ void TlsStream::onConnectReady() {
         return;
     }
     if (ctx_ == nullptr) {
-        ctx_ = makeContext(options_);
+        ctx_ = sharedContext(options_);
         if (ctx_ == nullptr) {
             fail("SSL_CTX_new failed: " + opensslError());
             return;
@@ -289,6 +311,16 @@ void TlsStream::onConnectReady() {
         SSL_set1_host(ssl_, host_.c_str());
     }
     state_ = State::Handshaking;
+    // The per-address budget applied to the TCP connect; give the TLS handshake the full timeout.
+    if (connectTimer_ != 0) {
+        loop_.cancelTimer(connectTimer_);
+    }
+    connectTimer_ = loop_.addTimer(options_.connectTimeoutMs, [this] {
+        connectTimer_ = 0;
+        if (state_ == State::Handshaking) {
+            fail("TLS handshake timeout");
+        }
+    });
     doHandshake();
 }
 
@@ -326,7 +358,17 @@ void TlsStream::doHandshake() {
 }
 
 void TlsStream::doRead() {
-    for (;;) {
+    if (reading_) {
+        return;  // re-entered from a callback: the outer loop keeps draining the socket
+    }
+    reading_ = true;
+    struct Guard {
+        bool& flag;
+        ~Guard() { flag = false; }
+    } guard{reading_};
+    // Bound the work per readiness event so one busy socket cannot starve timers or other sockets;
+    // epoll is level-triggered, so the remainder is read on the next iteration.
+    for (int iterations = 0; iterations < 64; ++iterations) {
         ssize_t n = 0;
         if (secure_) {
             ERR_clear_error();

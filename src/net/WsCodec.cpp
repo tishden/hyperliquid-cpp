@@ -53,6 +53,7 @@ void encodeWsFrame(WsOpcode opcode, std::string_view payload, std::uint32_t mask
 
 void WsFrameDecoder::reset() noexcept {
     ++epoch_;
+    staging_.clear();
     buffer_.clear();
     consumed_ = 0;
     fragments_.clear();
@@ -60,10 +61,20 @@ void WsFrameDecoder::reset() noexcept {
 }
 
 WsFrameDecoder::Status WsFrameDecoder::feed(const char* data, std::size_t len, WsFrameSink& sink) {
+    if (decoding_) {
+        // Called from inside a sink callback: stage the bytes; the outer call will decode them.
+        staging_.insert(staging_.end(), data, data + len);
+        return Status::Ok;
+    }
+    decoding_ = true;
     buffer_.insert(buffer_.end(), data, data + len);
     const std::uint64_t epoch = epoch_;
     Status status = Status::Ok;
     for (;;) {
+        if (!staging_.empty()) {
+            buffer_.insert(buffer_.end(), staging_.begin(), staging_.end());
+            staging_.clear();
+        }
         const std::size_t avail = buffer_.size() - consumed_;
         if (avail < 2) {
             break;
@@ -118,6 +129,7 @@ WsFrameDecoder::Status WsFrameDecoder::feed(const char* data, std::size_t len, W
             }
             sink.onWsControl(opcode, body);
             if (epoch != epoch_) {
+                decoding_ = false;
                 return Status::Ok;  // reset() from inside the callback
             }
         } else if (opcode == WsOpcode::Continuation) {
@@ -136,6 +148,7 @@ WsFrameDecoder::Status WsFrameDecoder::feed(const char* data, std::size_t len, W
                 fragments_.clear();
                 sink.onWsMessage(fragmentOpcode_, message);
                 if (epoch != epoch_) {
+                    decoding_ = false;
                     return Status::Ok;
                 }
             }
@@ -147,6 +160,7 @@ WsFrameDecoder::Status WsFrameDecoder::feed(const char* data, std::size_t len, W
             if (fin) {
                 sink.onWsMessage(opcode, body);
             if (epoch != epoch_) {
+                decoding_ = false;
                 return Status::Ok;  // reset() from inside the callback
             }
             } else {
@@ -159,6 +173,8 @@ WsFrameDecoder::Status WsFrameDecoder::feed(const char* data, std::size_t len, W
             break;
         }
     }
+    decoding_ = false;
+    staging_.clear();
     // Compact: drop consumed bytes once they dominate the buffer.
     if (consumed_ == buffer_.size()) {
         buffer_.clear();

@@ -162,3 +162,49 @@ TEST_F(MarketDataClientTest, ReconnectNowResubscribesImmediately) {
     EXPECT_EQ(listener.disconnected, 1);
     EXPECT_EQ(md.reconnectCount(), 1U);
 }
+
+TEST_F(MarketDataClientTest, ReconnectNowWhileStillConnectingKeepsTheSessionAlive) {
+    hl::MarketDataConfig cfg = config();
+    // Point at a port nobody listens on so the session stays in the connecting state.
+    cfg.urlOverride = "ws://127.0.0.1:9/ws";
+    cfg.session.reconnectMinDelayMs = 20;
+    hl::MarketDataClient md(loop, listener, cfg);
+    md.subscribeTrades("BTC");
+    md.start();
+    loop.runOnce(20);
+    md.session().reconnectNow();  // must not leave the session dead with no timer armed
+    ASSERT_TRUE(runUntil(loop, [&] { return md.reconnectCount() >= 2; }, 5000))
+        << "the session must keep retrying after reconnectNow() during a connect";
+}
+
+TEST_F(MarketDataClientTest, UnsubscribingAnL2BookDropsTheMaintainedBook) {
+    hl::MarketDataClient md(loop, listener, config());
+    md.subscribeL2Book("BTC");
+    md.start();
+    ASSERT_TRUE(runUntil(loop, [&] { return countSubscribes("l2Book") == 1; }));
+    venue.wsBroadcast(hltest::fixture("l2book_btc.json"));
+    ASSERT_TRUE(runUntil(loop, [&] { return md.book("BTC") != nullptr && md.book("BTC")->isValid(); }));
+    md.unsubscribeRaw(hl::MarketDataClient::subscriptionJson("l2Book", "BTC"));
+    EXPECT_EQ(md.book("BTC"), nullptr) << "a book nobody feeds must not linger";
+}
+
+TEST_F(MarketDataClientTest, UserAndCandleSubscriptions) {
+    hl::MarketDataClient md(loop, listener, config());
+    const auto user = *hl::parseAddress("0x14791697260e4c9a71f18484c9f997b308e59325");
+    md.subscribeCandle("ETH", "15m");
+    md.subscribeUserEvents(user);
+    md.subscribeUserFundings(user);
+    md.subscribeActiveAssetData(user, "ETH");
+    md.subscribeNotifications(user);
+    md.start();
+    ASSERT_TRUE(runUntil(loop, [&] { return venue.wsLog.size() == 5; }));
+    EXPECT_EQ(venue.wsLog[0], R"({"method":"subscribe","subscription":{"type":"candle","coin":"ETH","interval":"15m"}})");
+    EXPECT_NE(venue.wsLog[1].find(R"("type":"userEvents")"), std::string::npos);
+    EXPECT_NE(venue.wsLog[3].find(R"({"type":"activeAssetData","user":"0x14791697260e4c9a71f18484c9f997b308e59325","coin":"ETH"})"),
+              std::string::npos);
+    // Invalid coin names are refused instead of producing malformed JSON.
+    md.subscribeCandle("BAD\"COIN", "1m");
+    md.subscribeL2Book("BAD\"COIN");
+    loop.runOnce(20);
+    EXPECT_EQ(venue.wsLog.size(), 5U);
+}

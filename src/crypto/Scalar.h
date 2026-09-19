@@ -197,7 +197,8 @@ inline Limbs addMod(const Limbs& a, const Limbs& b) noexcept {
 /// Any 256-bit value → value mod n.
 inline Limbs reduce256(const Limbs& a) noexcept { return condSubN(a); }
 
-/// a⁻¹ mod n (a ≠ 0) by Fermat, a^(n−2), with a fixed 4-bit window and masked table lookups.
+/// a⁻¹ mod n by Fermat; the caller must ensure a ≠ 0 (a == 0 yields 0, which is not an inverse).
+/// Fermat, a^(n−2), with a fixed 4-bit window and masked table lookups.
 inline Limbs invMod(const Limbs& a) noexcept {
     Limbs e{};
     sub(kOrderN, Limbs{2, 0, 0, 0}, e);
@@ -221,6 +222,8 @@ inline Limbs invMod(const Limbs& a) noexcept {
         }
         result = mulMod(result, factor);
     }
+    // The table holds powers of the secret scalar; do not leave them on the stack.
+    std::memset(static_cast<void*>(table.data()), 0, sizeof(table));
     return result;
 }
 

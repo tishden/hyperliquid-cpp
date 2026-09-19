@@ -15,6 +15,7 @@
 
 #include "crypto/Scalar.h"
 #include "hl/core/Hex.h"
+#include "hl/core/Log.h"
 
 namespace hl {
 
@@ -136,14 +137,14 @@ struct Signer::NoncePool {
     std::size_t mask{0};
     std::uint64_t head{0};  // next entry to consume
     std::uint64_t tail{0};  // next slot to fill
-    std::atomic_flag lock = ATOMIC_FLAG_INIT;
+    std::atomic_flag lock{};
     std::atomic<std::size_t> size{0};
     std::atomic<bool> stop{false};
     std::uint64_t forkGeneration{0};
     std::uint64_t counter{0};  // producer-side
     ::secp256k1_context_struct* ctx{nullptr};
     const Hash256* key{nullptr};  // owned by the Signer, which outlives the pool
-    std::atomic_flag refilling = ATOMIC_FLAG_INIT;
+    std::atomic_flag refilling{};
     std::thread thread;
 
     std::size_t refill(std::size_t maxCount);
@@ -160,7 +161,13 @@ struct Signer::NoncePool {
     ~NoncePool() {
         stop.store(true);
         if (thread.joinable()) {
-            thread.join();
+            if (forkGeneration == gForkGeneration.load()) {
+                thread.join();
+            } else {
+                // In a forked child the refill thread does not exist; joining it would throw from a
+                // destructor. The child never uses the pool (generation mismatch), so let it go.
+                thread.detach();
+            }
         }
         OPENSSL_cleanse(ring.data(), ring.size() * sizeof(NonceEntry));
         if (ctx != nullptr) {
@@ -247,9 +254,14 @@ std::size_t Signer::NoncePool::refill(std::size_t maxCount) {
     }
     const detail::Limbs d = detail::fromBytes(key->data());
     std::size_t added = 0;
-    while (added < maxCount && size.load(std::memory_order_relaxed) <= mask && !stop.load(std::memory_order_relaxed)) {
+    // Bound the attempts: a persistently failing CSPRNG must not spin the refill thread on a core.
+    std::size_t attemptsLeft = 4 * maxCount + 8;
+    while (added < maxCount && attemptsLeft > 0 && size.load(std::memory_order_relaxed) <= mask &&
+           !stop.load(std::memory_order_relaxed)) {
+        --attemptsLeft;
         NonceEntry e;
         if (!produceNonce(ctx, *key, d, counter++, e)) {
+            logf(LogLevel::Warn, "nonce pool: could not produce a nonce (CSPRNG or HMAC failure)");
             continue;
         }
         const bool pushed = push(e);

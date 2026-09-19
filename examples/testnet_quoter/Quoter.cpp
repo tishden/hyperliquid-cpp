@@ -228,9 +228,10 @@ void Quoter::printStatus() {
     }
     const Decimal position = exchange_ != nullptr ? exchange_->position(settings_.coin) : Decimal{};
     const Decimal pnl = cash_ + (position - startPosition_).mul(mid);
-    std::printf("[status] %s mid=%s spread=%.2fbps%s pos=%s fills=%" PRIu64 " vol=$%s pnl≈$%s\n",
+    std::printf("[status] %s mid=%s spread=%.2fbps%s pos=%s fills=%" PRIu64 " vol=$%s pnl≈$%s%s\n",
                 settings_.coin.c_str(), str(mid).c_str(), book->spreadBps(), quotes.c_str(), str(position).c_str(),
-                fills_, str(volumeUsd_).c_str(), str(pnl).c_str());
+                fills_, str(volumeUsd_).c_str(), str(pnl).c_str(),
+                haltedByRisk_ ? "  [HALTED: position beyond 150% of the limit, quoting stopped]" : "");
 }
 
 void Quoter::shutdown(std::int64_t timeoutMs) {
@@ -263,6 +264,9 @@ void Quoter::printSummary() const {
                 amendments_, rejects_);
     std::printf("  fills           %" PRIu64 " (maker %" PRIu64 ")   volume $%s\n", fills_, makerFills_,
                 str(volumeUsd_).c_str());
+    if (haltedByRisk_) {
+        std::printf("  risk            HALTED — inventory exceeded 150%% of the limit; quoting was stopped\n");
+    }
     std::printf("  position        %s → %s\n", str(startPosition_).c_str(), str(position).c_str());
     std::printf("  pnl (mark@mid)  $%s\n", str(cash_ + (position - startPosition_).mul(mid)).c_str());
     if (exchange_ != nullptr) {

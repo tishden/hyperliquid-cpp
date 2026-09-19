@@ -64,6 +64,8 @@ public:
     void subscribe(std::string subscriptionJson);
     /// Remove a subscription and send `unsubscribe` if connected.
     void unsubscribe(std::string_view subscriptionJson);
+    /// Remove every subscription (sending `unsubscribe` for each while connected).
+    void clearSubscriptions();
     [[nodiscard]] const std::vector<std::string>& subscriptions() const noexcept { return subscriptions_; }
 
     /// Send a raw text frame. Returns false when not connected.

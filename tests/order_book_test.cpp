@@ -157,3 +157,35 @@ TEST(OrderBook, RealMainnetSnapshot) {
         EXPECT_GT(capture.book.asks()[i].px, capture.book.asks()[i - 1].px);
     }
 }
+
+// A locked or crossed bbo is resolved by dropping the crossing levels: the book never reports a
+// bid at or above its ask.
+TEST(OrderBook, LockedAndCrossedBboNeverLeaveACrossedBook) {
+    auto locked = book();
+    ASSERT_TRUE(locked.applyBbo(bbo("100.5", "1", "100.5", "1")));  // bid == ask
+    if (locked.isValid()) {
+        EXPECT_LT(locked.bestBid()->px, locked.bestAsk()->px);
+    }
+
+    auto crossed = book();
+    ASSERT_TRUE(crossed.applyBbo(bbo("101", "1", "100", "1")));  // bid > ask
+    if (crossed.isValid()) {
+        EXPECT_LT(crossed.bestBid()->px, crossed.bestAsk()->px);
+    }
+    // A later snapshot restores the venue's view either way.
+    const std::vector<BookLevel> bids = {lvl("100", "1")};
+    const std::vector<BookLevel> asks = {lvl("101", "1")};
+    crossed.applySnapshot(snapshot(bids, asks, 5000));
+    EXPECT_TRUE(crossed.isValid());
+    EXPECT_EQ(crossed.bestBid()->px, d("100"));
+}
+
+// A side with no best price in the update is emptied until the next snapshot.
+TEST(OrderBook, BboWithoutASideEmptiesIt) {
+    auto b = book();
+    hl::BboMsg m = bbo("100", "1", "101", "1");
+    m.hasBid = false;
+    ASSERT_TRUE(b.applyBbo(m));
+    EXPECT_TRUE(b.bids().empty());
+    EXPECT_FALSE(b.isValid());
+}

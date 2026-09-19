@@ -210,26 +210,29 @@ decimals; sizes have `szDecimals` decimals.
 | Parsers | real mainnet captures of every public channel, a full 758-frame session, synthetic private channels, malformed input | `tests/ws_message_parser_test.cpp` |
 | Codecs | WebSocket framing (all length encodings, fragmentation, control frames, byte-by-byte feeding, re-entrancy), HTTP (content-length, chunked, close-delimited, split reads), Keccak (rate-boundary vectors) | `tests/ws_codec_test.cpp`, `tests/http_codec_test.cpp`, `tests/keccak_test.cpp` |
 | Order book & rounding | overlay cases, capacity, VWAP, microprice; venue price/size rules | `tests/order_book_test.cpp`, `tests/asset_registry_test.cpp` |
-| End-to-end | `ExchangeClient` and `MarketDataClient` over real sockets against `MockVenue` (HTTP + WebSocket server): lifecycle, partial fills, duplicates, rejections, batches, cancel races, modify with oid change, timeouts, HTTP transport, disconnect/reconnect reconciliation, missed fills, external orders, agent wallets, heartbeats, stale detection | `tests/exchange_client_test.cpp`, `tests/market_data_client_test.cpp` |
+| End-to-end | `ExchangeClient`, `MarketDataClient`, `InfoClient` and `HttpClient` over real sockets against `MockVenue` (HTTP + WebSocket server): lifecycle, partial fills, duplicates, rejections, batch-wide errors, cancel races, fast cancels, modify with oid change and trigger preservation, timeouts, HTTP transport, disconnect/reconnect reconciliation, missed and stale fills, external and adopted orders, agent wallets, liquidations, eviction, rate-limit budget, request ordering, 429 back-off, re-entrant callbacks, restart | `tests/exchange_client_test.cpp`, `tests/market_data_client_test.cpp`, `tests/info_client_test.cpp`, `tests/http_client_test.cpp` |
+| Robustness | every fixture truncated at every byte length and 2 000 random single-byte mutations must not crash the parser | `tests/ws_message_parser_test.cpp` |
 | Live | signing validated against the real testnet: the venue recovers exactly the signer address from our signatures over both WS `post` and HTTP | `hl_testnet_quoter`, see [TESTNET.md](TESTNET.md) |
 
-### Verification matrix (v1.2.0)
+### Verification matrix (v1.3.0)
 
 | Build | Tests | Result |
 |---|---|---|
-| Clang 21, Release | 138 | all passed |
-| GCC 11.5 (system), Release | 138 | all passed |
-| GCC 15, Release | 138 | all passed |
-| Clang 21, AddressSanitizer + UBSan | 138 | all passed, no reports |
-| Clang 21, ThreadSanitizer (library tests; examples not built) | 132 | all passed, no reports |
-| Docker build stage (Ubuntu 24.04, GCC 13) | 138 | all passed |
+| Clang 21, Release | 186 | all passed |
+| GCC 11.5 (system), Release | 186 | all passed |
+| GCC 15, Release | 186 | all passed |
+| Clang 21, AddressSanitizer + UBSan | 186 | all passed, no reports |
+| Clang 21, ThreadSanitizer (library tests; examples not built) | 180 | all passed, no reports |
+| Docker build stage (Ubuntu 24.04, GCC 13) | 186 | all passed |
 
 | Live check against Hyperliquid testnet | Result |
 |---|---|
-| `hl_live_check --taker` (WebSocket transport) | **16/16 steps passed** — resting order, `orderStatus`/`frontendOpenOrders`, modify with oid change, cancel, batch + cancelAll, post-only rejection, local validation, IOC fill with fee and position, reduce-only close, `scheduleCancel` (venue requires $1 M volume), `updateLeverage`, forced reconnect + reconciliation, clean exit |
-| `hl_live_check --taker --transport http` | **16/16 steps passed**, 13/13 actions over `POST /exchange` |
+| `hl_live_check --taker --expiry-ms 30000` (WebSocket transport, `expiresAfter` on every action) | **17/17 steps passed** — resting order, `orderStatus`/`frontendOpenOrders`, modify with oid change, cancel, batch + cancelAll, post-only rejection, local validation, IOC fill with fee and position, reduce-only close, `scheduleCancel` (venue requires $1 M volume), `updateLeverage`, forced reconnect + reconciliation, clean exit |
+| `hl_live_check --taker --transport http` | **17/17 steps passed**, 13/13 actions over `POST /exchange` |
 | Quoter, 70 s quoting at the touch | 2 maker fills (0.0045 ETH each, fee 0.001781 USDC = 1.5 bps), inventory skew applied, orders canceled on exit |
 | Quoter, 5 min at 1.5 bps from mid | 21 amendments, 0 rejects, 0 errors, no fills (quotes behind the touch) |
+| Fast cancels (`f: true`) | accepted by the venue on single and batch cancels |
+| Order priority fee (`grouping:{"p":10000}`) | encoding accepted; rejected semantically ("Insufficient delegatable balance for priority order"), which is the expected answer for an account without staking balance |
 | Market data (`l2Book`, `bbo`, `trades`, `activeAssetCtx`) | books built, 0 parse errors |
 | Mainnet market-data replay parse | 758 frames, 0 parse errors |
 | Signed orders, RFC 6979, WebSocket `post` and HTTP | venue recovered exactly the local signer address |

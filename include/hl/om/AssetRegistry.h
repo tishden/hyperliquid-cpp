@@ -28,6 +28,7 @@ struct AssetInfo {
     std::uint32_t asset{};       ///< wire asset id: perp index, or 10000 + spot index
     Kind kind{Kind::Perp};
     int szDecimals{};            ///< size precision
+    std::string baseToken{};     ///< spot only: base token of the pair ("PURR" for "PURR/USDC")
     std::uint32_t maxLeverage{}; ///< perps only
     bool onlyIsolated{false};    ///< perps only
     bool isDelisted{false};      ///< perps only
@@ -37,7 +38,12 @@ struct AssetInfo {
 
     /// Round a price to the nearest valid value in the given direction.
     [[nodiscard]] Decimal roundPx(Decimal px, RoundingMode mode = RoundingMode::Nearest) const noexcept;
-    /// Round a size to `szDecimals` (default: toward zero, never exceeding the request).
+    /**
+     * @brief Round a size to `szDecimals`.
+     *
+     * With `RoundingMode::Down` a negative size rounds **toward zero**, not toward negative
+     * infinity, so rounding never asks for more than the caller requested on either side.
+     */
     [[nodiscard]] Decimal roundSz(Decimal sz, RoundingMode mode = RoundingMode::Down) const noexcept;
     /// True when the price already satisfies both rules.
     [[nodiscard]] bool isValidPx(Decimal px) const noexcept { return roundPx(px, RoundingMode::Down) == px; }

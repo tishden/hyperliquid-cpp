@@ -137,6 +137,60 @@ struct UserFillsMsg {
     std::span<const FillMsg> fills{};
 };
 
+/// `candle` channel — one OHLCV bar update (the current bar is re-sent as it updates).
+struct CandleMsg {
+    std::string_view coin{};
+    std::string_view interval{};
+    std::int64_t openTimeMs{};
+    std::int64_t closeTimeMs{};
+    Decimal open{}, close{}, high{}, low{};
+    Decimal volume{};
+    std::uint64_t trades{0};
+};
+
+/// A liquidation of this account (`userEvents` channel). Positions are closed by the venue.
+struct LiquidationMsg {
+    std::uint64_t lid{};
+    std::string_view liquidator{};
+    std::string_view liquidatedUser{};
+    Decimal liquidatedNtlPos{};
+    Decimal liquidatedAccountValue{};
+};
+
+/// An order canceled by the venue rather than by the user (`userEvents` channel):
+/// margin, self-trade prevention, delisting, open-interest caps, scheduled cancel.
+struct NonUserCancelMsg {
+    std::string_view coin{};
+    std::uint64_t oid{};
+};
+
+/// A funding payment of this account (`userEvents` / `userFundings` channels).
+struct UserFundingMsg {
+    std::int64_t timeMs{};
+    std::string_view coin{};
+    Decimal usdc{};   ///< negative = paid
+    Decimal szi{};    ///< signed position it was charged on
+    Decimal rate{};
+};
+
+/// `activeAssetData` channel — per-account, per-asset trading limits pushed by the venue.
+struct ActiveAssetDataMsg {
+    std::string_view user{};
+    std::string_view coin{};
+    std::uint32_t leverage{};
+    bool isCross{true};
+    Decimal maxTradeSzBuy{};
+    Decimal maxTradeSzSell{};
+    Decimal availableToTradeBuy{};
+    Decimal availableToTradeSell{};
+    Decimal markPx{};
+};
+
+/// `notification` channel — free-form message the venue shows to the account.
+struct NotificationMsg {
+    std::string_view text{};
+};
+
 /// Response to a `{"method":"post"}` request (action or info) sent over the WebSocket.
 struct PostResponseMsg {
     enum class Type : std::uint8_t { Action, Info, Error };
@@ -168,6 +222,15 @@ public:
     virtual void onAllMids(const AllMidsMsg& /*msg*/) {}
     virtual void onOrderUpdates(std::span<const OrderUpdateMsg> /*updates*/) {}
     virtual void onUserFills(const UserFillsMsg& /*msg*/) {}
+    virtual void onCandle(const CandleMsg& /*msg*/) {}
+    /// This account was liquidated (`userEvents`).
+    virtual void onLiquidation(const LiquidationMsg& /*msg*/) {}
+    /// Orders canceled by the venue, not by us (`userEvents`).
+    virtual void onNonUserCancels(std::span<const NonUserCancelMsg> /*cancels*/) {}
+    /// Funding payments (`userEvents` and `userFundings`).
+    virtual void onUserFundings(std::span<const UserFundingMsg> /*fundings*/) {}
+    virtual void onActiveAssetData(const ActiveAssetDataMsg& /*msg*/) {}
+    virtual void onNotification(const NotificationMsg& /*msg*/) {}
     virtual void onPostResponse(const PostResponseMsg& /*msg*/) {}
     virtual void onSubscriptionResponse(const SubscriptionResponseMsg& /*msg*/) {}
     virtual void onPong() {}

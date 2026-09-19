@@ -4,6 +4,7 @@ target_link_libraries(hl_example_strategy PUBLIC hyperliquid)
 hl_target_defaults(hl_example_strategy)
 
 add_executable(hl_testnet_quoter testnet_quoter/main.cpp testnet_quoter/Quoter.cpp)
+target_include_directories(hl_testnet_quoter PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(hl_testnet_quoter PRIVATE hl_example_strategy)
 hl_target_defaults(hl_testnet_quoter)
 
@@ -12,5 +13,6 @@ target_link_libraries(hl_book_printer PRIVATE hyperliquid)
 hl_target_defaults(hl_book_printer)
 
 add_executable(hl_live_check live_check/main.cpp)
+target_include_directories(hl_live_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(hl_live_check PRIVATE hyperliquid)
 hl_target_defaults(hl_live_check)

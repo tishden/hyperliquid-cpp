@@ -92,14 +92,17 @@ Result<std::size_t> AssetRegistry::loadSpotMeta(std::string_view text) {
     if (!tokens.isArray() || !universe.isArray()) {
         return Error{Error::Kind::Parse, 0, "spotMeta: missing tokens/universe"};
     }
-    // token index → szDecimals
+    // token index → (szDecimals, name)
     std::vector<int> tokenSzDecimals;
+    std::vector<std::string> tokenNames;
     for (auto token : tokens.array()) {
         const auto idx = static_cast<std::size_t>(token.field("index").asInt());
         if (tokenSzDecimals.size() <= idx) {
             tokenSzDecimals.resize(idx + 1, 0);
+            tokenNames.resize(idx + 1);
         }
         tokenSzDecimals[idx] = static_cast<int>(token.field("szDecimals").asInt());
+        tokenNames[idx] = std::string{token.field("name").asString()};
     }
     std::erase_if(assets_, [](const AssetInfo& a) { return a.kind == AssetInfo::Kind::Spot; });
     std::size_t added = 0;
@@ -113,7 +116,8 @@ Result<std::size_t> AssetRegistry::loadSpotMeta(std::string_view text) {
             for (auto t : pairTokens.array()) {
                 const auto base = static_cast<std::size_t>(t.asInt());
                 info.szDecimals = base < tokenSzDecimals.size() ? tokenSzDecimals[base] : 0;
-                break;  // first token is the base
+                info.baseToken = base < tokenNames.size() ? tokenNames[base] : std::string{};
+                break;  // the first token of the pair is the base asset
             }
         }
         if (!info.name.empty()) {

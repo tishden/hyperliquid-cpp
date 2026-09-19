@@ -11,7 +11,8 @@ namespace hl {
 struct HttpResponse {
     int status{0};
     std::string body{};
-    bool keepAlive{true};  ///< false if the server sent `Connection: close`
+    bool keepAlive{true};       ///< false if the server sent `Connection: close`
+    int retryAfterSeconds{0};   ///< `Retry-After` header (0 if absent); set on 429 / 503
 };
 
 /**

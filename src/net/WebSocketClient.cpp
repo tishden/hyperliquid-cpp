@@ -5,6 +5,7 @@
 #include <cctype>
 #include <cstring>
 
+#include "hl/Version.h"
 #include "hl/core/Log.h"
 
 namespace hl {
@@ -86,7 +87,10 @@ bool WebSocketClient::connect(const std::string& url) {
 
 void WebSocketClient::onTlsConnected() {
     std::uint8_t keyBytes[16];
-    RAND_bytes(keyBytes, sizeof(keyBytes));
+    if (RAND_bytes(keyBytes, sizeof(keyBytes)) != 1) {
+        fail("RAND_bytes failed: cannot build the WebSocket handshake key");
+        return;
+    }
     handshakeKey_ = base64Encode(keyBytes, sizeof(keyBytes));
     std::string request;
     request.reserve(512);
@@ -95,7 +99,7 @@ void WebSocketClient::onTlsConnected() {
     request += "Upgrade: websocket\r\nConnection: Upgrade\r\n";
     request += "Sec-WebSocket-Key: " + handshakeKey_ + "\r\n";
     request += "Sec-WebSocket-Version: 13\r\n";
-    request += "User-Agent: hyperliquid-cpp/1.0\r\n";
+    request += std::string{"User-Agent: hyperliquid-cpp/"} + hl::kVersionString + "\r\n";
     if (!options_.extraHeaders.empty()) {
         request += options_.extraHeaders + "\r\n";
     }

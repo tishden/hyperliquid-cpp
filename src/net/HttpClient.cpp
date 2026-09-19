@@ -2,6 +2,7 @@
 
 #include <stdexcept>
 
+#include "hl/Version.h"
 #include "hl/core/Log.h"
 
 namespace hl {
@@ -31,7 +32,9 @@ void HttpClient::postJson(std::string_view path, std::string body, Callback call
     req.wire += path;
     req.wire += " HTTP/1.1\r\nHost: ";
     req.wire += url_.host;
-    req.wire += "\r\nUser-Agent: hyperliquid-cpp/1.0\r\nAccept: application/json\r\nContent-Type: application/json\r\n"
+    req.wire += "\r\nUser-Agent: hyperliquid-cpp/";
+    req.wire += kVersionString;
+    req.wire += "\r\nAccept: application/json\r\nContent-Type: application/json\r\n"
                 "Connection: keep-alive\r\nContent-Length: ";
     req.wire += std::to_string(body.size());
     req.wire += "\r\n\r\n";
@@ -61,12 +64,25 @@ void HttpClient::pump() {
     if (head.written) {
         return;  // awaiting response
     }
+    if (pausedUntilMs_ != 0) {
+        const std::int64_t remaining = pausedUntilMs_ - EventLoop::nowMs();
+        if (remaining > 0) {
+            if (pauseTimer_ == 0) {
+                pauseTimer_ = loop_.addTimer(remaining, [this] {
+                    pauseTimer_ = 0;
+                    pausedUntilMs_ = 0;
+                    pump();
+                });
+            }
+            return;  // rate-limited: hold the queue instead of hammering the venue
+        }
+        pausedUntilMs_ = 0;
+    }
     if (idleTimer_ != 0) {
         loop_.cancelTimer(idleTimer_);
         idleTimer_ = 0;
     }
     head.written = true;
-    ++head.attempts;
     parser_.reset();
     stream_.send(head.wire);
     requestTimer_ = loop_.addTimer(options_.requestTimeoutMs, [this] {
@@ -97,6 +113,23 @@ void HttpClient::onTlsConnected() {
 }
 
 void HttpClient::onTlsData(const char* data, std::size_t len) {
+    if (dispatching_) {
+        // Arrived while a response callback was running (e.g. the callback pumped the event loop):
+        // stage it, the outer call decodes it once the callback returns.
+        staged_.append(data, len);
+        return;
+    }
+    dispatching_ = true;
+    processBytes(data, len);
+    while (!staged_.empty()) {
+        const std::string chunk = std::move(staged_);
+        staged_.clear();
+        processBytes(chunk.data(), chunk.size());
+    }
+    dispatching_ = false;
+}
+
+void HttpClient::processBytes(const char* data, std::size_t len) {
     while (len != 0) {
         if (queue_.empty() || !queue_.front().written) {
             logf(LogLevel::Warn, "HTTP %s: unsolicited %zu bytes dropped", url_.host.c_str(), len);
@@ -126,6 +159,16 @@ void HttpClient::onTlsData(const char* data, std::size_t len) {
         if (response.status < 200 || response.status >= 300) {
             error = Error{Error::Kind::Http, response.status, "HTTP " + std::to_string(response.status)};
         }
+        if (response.status == 429) {
+            // Never replay the request (actions are not idempotent) — but stop sending for a while.
+            ++rateLimitHits_;
+            const std::int64_t pause = response.retryAfterSeconds > 0
+                                           ? static_cast<std::int64_t>(response.retryAfterSeconds) * 1000
+                                           : options_.defaultRateLimitPauseMs;
+            pausedUntilMs_ = EventLoop::nowMs() + pause;
+            logf(LogLevel::Warn, "http %s: rate limited, pausing the queue for %lld ms", url_.host.c_str(),
+                 static_cast<long long>(pause));
+        }
         completeHead(error, response);
         if (!stream_.isOpen()) {
             return;
@@ -135,6 +178,7 @@ void HttpClient::onTlsData(const char* data, std::size_t len) {
 
 void HttpClient::onTlsClosed(std::string_view reason) {
     connecting_ = false;
+    staged_.clear();
     disarmTimers();
     if (queue_.empty()) {
         return;
@@ -150,11 +194,13 @@ void HttpClient::onTlsClosed(std::string_view reason) {
         completeHead(Error{Error::Kind::Transport, 0, "connection closed: " + std::string{reason}}, {});
         return;
     }
-    if (head.attempts >= 3) {
+    if (head.connectAttempts >= 3) {
         completeHead(Error{Error::Kind::Transport, 0, "connect failed: " + std::string{reason}}, {});
         return;
     }
-    ++head.attempts;
+    ++head.connectAttempts;
+    // Brief backoff so three attempts do not all hit a host that is briefly unavailable.
+    pausedUntilMs_ = EventLoop::nowMs() + 50 * head.connectAttempts;
     pump();
 }
 
@@ -182,6 +228,10 @@ void HttpClient::armIdleTimer() {
 }
 
 void HttpClient::disarmTimers() {
+    if (pauseTimer_ != 0) {
+        loop_.cancelTimer(pauseTimer_);
+        pauseTimer_ = 0;
+    }
     if (requestTimer_ != 0) {
         loop_.cancelTimer(requestTimer_);
         requestTimer_ = 0;

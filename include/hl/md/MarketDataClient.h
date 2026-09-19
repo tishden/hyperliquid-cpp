@@ -34,7 +34,10 @@ struct L2BookOptions {
 };
 
 /**
- * @brief Callbacks of a MarketDataClient.
+ * @brief Callbacks of a MarketDataClient. Invoked on the event-loop thread.
+ *
+ * A callback may call any client method and may run the event loop re-entrantly; it must not
+ * destroy the client or the loop, and views it receives are valid only until it returns.
  *
  * Inherits every raw message callback of WsMessageHandler (`onL2Book`, `onBbo`,
  * `onTrades`, `onAssetCtx`, `onAllMids`, …) and adds connection events plus a
@@ -92,6 +95,17 @@ public:
     void subscribeAssetCtx(std::string_view coin);
     /// `allMids` — mids of all coins.
     void subscribeAllMids();
+    /// `candle` — OHLCV bars; @p interval is "1m", "15m", "1h", "1d", …
+    void subscribeCandle(std::string_view coin, std::string_view interval);
+    /// `userEvents` for @p user — fills, funding, **liquidations** and venue-initiated cancels
+    /// (delivered on channel `user`; see `WsMessageHandler::onLiquidation` / `onNonUserCancels`).
+    void subscribeUserEvents(const Address& user);
+    /// `userFundings` — funding payments of @p user.
+    void subscribeUserFundings(const Address& user);
+    /// `activeAssetData` — leverage and tradable size of @p user on one asset.
+    void subscribeActiveAssetData(const Address& user, std::string_view coin);
+    /// `notification` — venue notifications for @p user.
+    void subscribeNotifications(const Address& user);
     /// Subscribe with a raw subscription object, e.g. `{"type":"candle","coin":"BTC","interval":"1m"}`.
     /// Messages of channels without a typed callback arrive in `onUnhandled`.
     void subscribeRaw(std::string subscriptionJson);
@@ -116,6 +130,9 @@ private:
     void onSessionMessage(std::string_view message) override;
     void onSessionClosed(std::string_view reason) override;
 
+    /// The subscription object for a user channel, e.g. `{"type":"userEvents","user":"0x…"}`.
+    [[nodiscard]] static std::string userSubscriptionJson(std::string_view type, const Address& user);
+
     // WsMessageHandler (internal: update books, then forward)
     void onL2Book(const L2BookMsg& msg) override;
     void onBbo(const BboMsg& msg) override;
@@ -124,6 +141,12 @@ private:
     void onAllMids(const AllMidsMsg& msg) override;
     void onOrderUpdates(std::span<const OrderUpdateMsg> updates) override;
     void onUserFills(const UserFillsMsg& msg) override;
+    void onCandle(const CandleMsg& msg) override;
+    void onLiquidation(const LiquidationMsg& msg) override;
+    void onNonUserCancels(std::span<const NonUserCancelMsg> cancels) override;
+    void onUserFundings(std::span<const UserFundingMsg> fundings) override;
+    void onActiveAssetData(const ActiveAssetDataMsg& msg) override;
+    void onNotification(const NotificationMsg& msg) override;
     void onPostResponse(const PostResponseMsg& msg) override;
     void onSubscriptionResponse(const SubscriptionResponseMsg& msg) override;
     void onPong() override;

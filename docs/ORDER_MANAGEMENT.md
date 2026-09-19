@@ -53,10 +53,14 @@ placeOrder ────► │ validate ─► order table (cloid → Tracked) �
 
 | Step | Request | Result | On failure |
 |---|---|---|---|
-| Asset metadata | `/info {"type":"meta"}` (+ `spotMeta` if `loadSpotAssets`) | `AssetRegistry`: name → asset id, `szDecimals`, max leverage | `onError`, retried every 2 s |
+| Asset metadata | `/info {"type":"meta"}` (+ `spotMeta` if `loadSpotAssets`) | `AssetRegistry`: name → asset id, `szDecimals`, max leverage, spot base token | `onError`, retried every 2 s |
 | Positions | `/info {"type":"clearinghouseState","user":…}` | initial per-coin position | warning; positions then come from fills only |
+| Spot balances (if `loadSpotAssets`) | `/info {"type":"spotClearinghouseState","user":…}` | starting position of every spot market, from the balance of its base token | warning; spot positions start empty |
+| Signer role | `/info {"type":"userRole","user":<signer>}` | detects an API (agent) wallet and its master account | debug log |
 | Order stream | WS subscribe `orderUpdates` for the user | subscription acknowledged | reconnect loop |
 | Fill stream | WS subscribe `userFills` for the user | subscription acknowledged; first message is a snapshot of recent fills | reconnect loop |
+| Account events (if `subscribeUserEvents`) | WS subscribe `userEvents` | liquidations and venue-initiated cancels (channel `user`) | reconnect loop |
+| Existing orders (if `adoptExistingOrders`) | `/info {"type":"frontendOpenOrders","user":…}` once after ready | orders left resting by a previous process are adopted (`Order::external`) | warning |
 
 "User" is the vault address if one is configured, otherwise the account address (for an agent wallet, the
 master account — never the agent's own address).
@@ -116,8 +120,22 @@ actions go over HTTP. Strategies should normally wait for `onReady()`.
 7. **Register** a pending entry `requestId → {kind, cloids in action order, modify targets, callback}` and
    return the cloids.
 
-`cancel`, `cancelAll`, `cancelByOid`, `modify`, `scheduleCancel`, `updateLeverage` and `submitAction` follow
-the same steps 3–7 with their own validation.
+`cancel`, `cancelAll`, `cancelByOid`, `modify`, `scheduleCancel`, `updateLeverage`, `updateIsolatedMargin`,
+`reserveRequestWeight`, `noop` and `submitAction` follow the same steps 3–7 with their own validation.
+
+**Rate-limit accounting.** Each submission counts one *address* unit per order or cancel entry (one for other
+actions) into `Stats::addressUnitsUsed`; `rateLimitRefreshMs` re-reads the venue's own figure (`userRateLimit`)
+so `rateLimitStatus()` stays close to the truth, and the client warns once when less than
+`rateLimitWarnFraction` of the budget is left. `cancelAll` splits into actions of at most 40 entries — the size
+the venue charges as one IP-weight unit. A 429 pauses that HTTP queue for `Retry-After`; the request itself
+fails and is never replayed.
+
+**Fast cancels.** Cancels carry the venue's `fast` flag unless the order is a trigger order, which the venue
+refuses to fast-cancel. The flag is documented for future mempool prioritisation of cancels.
+
+**Per-action expiry.** With `actionExpiryMs` every action carries `expiresAfter = now + N` and the venue drops
+it if it arrives later — a guard against a stalled connection delivering stale orders (expired actions cost 5×
+the usual address budget).
 
 ## 4. Correlating responses
 
@@ -151,6 +169,10 @@ The same order is reported by three independent channels whose relative order is
 The client applies every message as soon as it arrives and makes the result independent of the order of
 arrival using the rules below.
 
+**Batch-wide rejections.** When pre-validation fails, the venue answers with one error for the whole payload.
+That status is applied to every order of the batch (all `Rejected`); if the status list is shorter than the
+batch for any other reason, the remaining orders are reconciled instead of being left pending forever.
+
 ### Acknowledgement of an order action
 
 | Status | Effect |
@@ -177,6 +199,12 @@ arrival using the rules below.
 | unknown string | `lastError = status`, state unchanged |
 
 ### `userFills` → see [§7](#7-fills-filled-size-and-positions).
+
+### `userEvents` (channel `user`)
+
+Enabled by `subscribeUserEvents`. Liquidations reach `ExchangeListener::onLiquidation` — they appear in no
+other stream — funding payments reach `onFunding`, and a cancel performed by the venue itself marks the
+matching order `Canceled` with `lastError = "canceledByVenue"`.
 
 ## 6. State machine rules
 
@@ -279,6 +307,9 @@ the order continuous:
 
 `reconcile(cloid)` queries `/info {"type":"orderStatus","user":…,"oid":"0x<cloid>"}` (by numeric oid for
 external orders) and applies the answer like an order update.
+
+After a reconnect the client asks for the whole list first (`frontendOpenOrders`) and only probes the orders
+missing from it individually — one request instead of one per live order.
 
 | Trigger | Why |
 |---|---|

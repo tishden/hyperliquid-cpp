@@ -83,7 +83,10 @@ std::string_view toString(OrderUpdateStatus status) noexcept {
     return "Unknown";
 }
 
-struct WsMessageParser::Impl {
+// Per-nesting-level parse state: simdjson parser, padded input copy and the reusable message
+// buffers. A handler callback may run the event loop and thus re-enter parse(); each nesting level
+// gets its own state so the views handed to the outer callback stay valid.
+struct ParseState {
     od::parser parser{};
     std::vector<char> padded{};
     std::vector<BookLevel> bids{};
@@ -92,9 +95,10 @@ struct WsMessageParser::Impl {
     std::vector<MidEntry> mids{};
     std::vector<OrderUpdateMsg> orderUpdates{};
     std::vector<FillMsg> fills{};
-    Stats stats{};
+    std::vector<NonUserCancelMsg> nonUserCancels{};
+    std::vector<UserFundingMsg> fundings{};
 
-    Impl() {
+    ParseState() {
         padded.resize(4096 + simdjson::SIMDJSON_PADDING);
         bids.reserve(kMaxLevelsPerSide);
         asks.reserve(kMaxLevelsPerSide);
@@ -104,7 +108,7 @@ struct WsMessageParser::Impl {
         fills.reserve(256);
     }
 
-    bool parse(std::string_view frame, WsMessageHandler& h) {
+    bool parse(std::string_view frame, WsMessageHandler& h, WsMessageParser::Stats& stats) {
         ++stats.messages;
         if (padded.size() < frame.size() + simdjson::SIMDJSON_PADDING) {
             padded.resize(frame.size() + simdjson::SIMDJSON_PADDING);
@@ -135,6 +139,17 @@ struct WsMessageParser::Impl {
             ok = onOrderUpdates(doc, h);
         } else if (channel == "userFills") {
             ok = onUserFills(doc, h);
+        } else if (channel == "candle") {
+            ok = onCandle(doc, h);
+        } else if (channel == "user") {
+            // The `userEvents` subscription delivers on a channel called "user".
+            ok = onUserEvents(doc, h);
+        } else if (channel == "userFundings") {
+            ok = onUserFundings(doc, h);
+        } else if (channel == "activeAssetData") {
+            ok = onActiveAssetData(doc, h);
+        } else if (channel == "notification") {
+            ok = onNotification(doc, h);
         } else if (channel == "post") {
             ok = onPost(doc, h);
         } else if (channel == "allMids") {
@@ -462,6 +477,51 @@ struct WsMessageParser::Impl {
         return true;
     }
 
+    bool readFill(od::value value, FillMsg& f) {
+        od::object obj;
+        if (value.get_object().get(obj) != simdjson::SUCCESS) {
+            return false;
+        }
+            for (auto ff : obj) {
+                std::string_view k;
+                if (ff.escaped_key().get(k) != simdjson::SUCCESS) {
+                    return false;
+                }
+                if (k == "coin") {
+                    if (!readString(ff.value(), f.coin)) { return false; }
+                } else if (k == "px") {
+                    if (!readDecimal(ff.value(), f.px)) { return false; }
+                } else if (k == "sz") {
+                    if (!readDecimal(ff.value(), f.sz)) { return false; }
+                } else if (k == "side") {
+                    if (!readSide(ff.value(), f.side)) { return false; }
+                } else if (k == "time") {
+                    if (!readInt(ff.value(), f.timeMs)) { return false; }
+                } else if (k == "startPosition") {
+                    if (!readDecimal(ff.value(), f.startPosition)) { return false; }
+                } else if (k == "dir") {
+                    if (!readString(ff.value(), f.dir)) { return false; }
+                } else if (k == "closedPnl") {
+                    if (!readDecimal(ff.value(), f.closedPnl)) { return false; }
+                } else if (k == "hash") {
+                    if (!readString(ff.value(), f.hash)) { return false; }
+                } else if (k == "oid") {
+                    if (!readUint(ff.value(), f.oid)) { return false; }
+                } else if (k == "crossed") {
+                    if (ff.value().get_bool().get(f.crossed) != simdjson::SUCCESS) { return false; }
+                } else if (k == "fee") {
+                    if (!readDecimal(ff.value(), f.fee)) { return false; }
+                } else if (k == "feeToken") {
+                    if (!readString(ff.value(), f.feeToken)) { return false; }
+                } else if (k == "tid") {
+                    if (!readUint(ff.value(), f.tid)) { return false; }
+                } else if (k == "cloid") {
+                    readOptionalCloid(ff.value(), f.cloid);
+                }
+            }
+        return true;
+    }
+
     bool onUserFills(od::document& doc, WsMessageHandler& h) {
         od::object data;
         if (doc["data"].get_object().get(data) != simdjson::SUCCESS) {
@@ -484,47 +544,13 @@ struct WsMessageParser::Impl {
                     return false;
                 }
                 for (auto elem : arr) {
-                    od::object obj;
-                    if (elem.get_object().get(obj) != simdjson::SUCCESS) {
+                    od::value v;
+                    if (elem.get(v) != simdjson::SUCCESS) {
                         return false;
                     }
                     FillMsg f;
-                    for (auto ff : obj) {
-                        std::string_view k;
-                        if (ff.escaped_key().get(k) != simdjson::SUCCESS) {
-                            return false;
-                        }
-                        if (k == "coin") {
-                            if (!readString(ff.value(), f.coin)) { return false; }
-                        } else if (k == "px") {
-                            if (!readDecimal(ff.value(), f.px)) { return false; }
-                        } else if (k == "sz") {
-                            if (!readDecimal(ff.value(), f.sz)) { return false; }
-                        } else if (k == "side") {
-                            if (!readSide(ff.value(), f.side)) { return false; }
-                        } else if (k == "time") {
-                            if (!readInt(ff.value(), f.timeMs)) { return false; }
-                        } else if (k == "startPosition") {
-                            if (!readDecimal(ff.value(), f.startPosition)) { return false; }
-                        } else if (k == "dir") {
-                            if (!readString(ff.value(), f.dir)) { return false; }
-                        } else if (k == "closedPnl") {
-                            if (!readDecimal(ff.value(), f.closedPnl)) { return false; }
-                        } else if (k == "hash") {
-                            if (!readString(ff.value(), f.hash)) { return false; }
-                        } else if (k == "oid") {
-                            if (!readUint(ff.value(), f.oid)) { return false; }
-                        } else if (k == "crossed") {
-                            if (ff.value().get_bool().get(f.crossed) != simdjson::SUCCESS) { return false; }
-                        } else if (k == "fee") {
-                            if (!readDecimal(ff.value(), f.fee)) { return false; }
-                        } else if (k == "feeToken") {
-                            if (!readString(ff.value(), f.feeToken)) { return false; }
-                        } else if (k == "tid") {
-                            if (!readUint(ff.value(), f.tid)) { return false; }
-                        } else if (k == "cloid") {
-                            readOptionalCloid(ff.value(), f.cloid);
-                        }
+                    if (!readFill(v, f)) {
+                        return false;
                     }
                     fills.push_back(f);
                 }
@@ -532,6 +558,274 @@ struct WsMessageParser::Impl {
         }
         msg.fills = fills;
         h.onUserFills(msg);
+        return true;
+    }
+
+    bool onCandle(od::document& doc, WsMessageHandler& h) {
+        od::object data;
+        if (doc["data"].get_object().get(data) != simdjson::SUCCESS) {
+            return false;
+        }
+        CandleMsg msg;
+        for (auto field : data) {
+            std::string_view key;
+            if (field.escaped_key().get(key) != simdjson::SUCCESS) {
+                return false;
+            }
+            if (key == "s") {
+                if (!readString(field.value(), msg.coin)) { return false; }
+            } else if (key == "i") {
+                if (!readString(field.value(), msg.interval)) { return false; }
+            } else if (key == "t") {
+                if (!readInt(field.value(), msg.openTimeMs)) { return false; }
+            } else if (key == "T") {
+                if (!readInt(field.value(), msg.closeTimeMs)) { return false; }
+            } else if (key == "o") {
+                if (!readDecimal(field.value(), msg.open)) { return false; }
+            } else if (key == "c") {
+                if (!readDecimal(field.value(), msg.close)) { return false; }
+            } else if (key == "h") {
+                if (!readDecimal(field.value(), msg.high)) { return false; }
+            } else if (key == "l") {
+                if (!readDecimal(field.value(), msg.low)) { return false; }
+            } else if (key == "v") {
+                if (!readDecimal(field.value(), msg.volume)) { return false; }
+            } else if (key == "n") {
+                if (!readUint(field.value(), msg.trades)) { return false; }
+            }
+        }
+        h.onCandle(msg);
+        return true;
+    }
+
+    bool readFundingEntry(od::value value, UserFundingMsg& f) {
+        od::object obj;
+        if (value.get_object().get(obj) != simdjson::SUCCESS) {
+            return false;
+        }
+        for (auto field : obj) {
+            std::string_view key;
+            if (field.escaped_key().get(key) != simdjson::SUCCESS) {
+                return false;
+            }
+            if (key == "time") {
+                if (!readInt(field.value(), f.timeMs)) { return false; }
+            } else if (key == "coin") {
+                if (!readString(field.value(), f.coin)) { return false; }
+            } else if (key == "usdc") {
+                if (!readDecimal(field.value(), f.usdc)) { return false; }
+            } else if (key == "szi") {
+                if (!readDecimal(field.value(), f.szi)) { return false; }
+            } else if (key == "fundingRate") {
+                if (!readDecimal(field.value(), f.rate)) { return false; }
+            }
+        }
+        return true;
+    }
+
+    bool readFills(od::value value, WsMessageHandler& h, bool isSnapshot) {
+        od::array arr;
+        if (value.get_array().get(arr) != simdjson::SUCCESS) {
+            return false;
+        }
+        fills.clear();
+        for (auto elem : arr) {
+            od::value v;
+            if (elem.get(v) != simdjson::SUCCESS) {
+                return false;
+            }
+            FillMsg f;
+            if (!readFill(v, f)) {
+                return false;
+            }
+            fills.push_back(f);
+        }
+        UserFillsMsg msg;
+        msg.isSnapshot = isSnapshot;
+        msg.fills = fills;
+        h.onUserFills(msg);
+        return true;
+    }
+
+    // userEvents: {"channel":"user","data":{ fills | funding | liquidation | nonUserCancel }}
+    bool onUserEvents(od::document& doc, WsMessageHandler& h) {
+        od::object data;
+        if (doc["data"].get_object().get(data) != simdjson::SUCCESS) {
+            return false;
+        }
+        for (auto field : data) {
+            std::string_view key;
+            if (field.escaped_key().get(key) != simdjson::SUCCESS) {
+                return false;
+            }
+            if (key == "fills") {
+                if (!readFills(field.value(), h, false)) { return false; }
+            } else if (key == "funding") {
+                UserFundingMsg f;
+                if (!readFundingEntry(field.value(), f)) { return false; }
+                fundings.assign(1, f);
+                h.onUserFundings(fundings);
+            } else if (key == "liquidation") {
+                od::object obj;
+                if (field.value().get_object().get(obj) != simdjson::SUCCESS) {
+                    return false;
+                }
+                LiquidationMsg m;
+                for (auto lf : obj) {
+                    std::string_view k;
+                    if (lf.escaped_key().get(k) != simdjson::SUCCESS) {
+                        return false;
+                    }
+                    if (k == "lid") {
+                        if (!readUint(lf.value(), m.lid)) { return false; }
+                    } else if (k == "liquidator") {
+                        if (!readString(lf.value(), m.liquidator)) { return false; }
+                    } else if (k == "liquidated_user") {
+                        if (!readString(lf.value(), m.liquidatedUser)) { return false; }
+                    } else if (k == "liquidated_ntl_pos") {
+                        if (!readDecimal(lf.value(), m.liquidatedNtlPos)) { return false; }
+                    } else if (k == "liquidated_account_value") {
+                        if (!readDecimal(lf.value(), m.liquidatedAccountValue)) { return false; }
+                    }
+                }
+                h.onLiquidation(m);
+            } else if (key == "nonUserCancel") {
+                od::array arr;
+                if (field.value().get_array().get(arr) != simdjson::SUCCESS) {
+                    return false;
+                }
+                nonUserCancels.clear();
+                for (auto elem : arr) {
+                    od::object obj;
+                    if (elem.get_object().get(obj) != simdjson::SUCCESS) {
+                        return false;
+                    }
+                    NonUserCancelMsg c;
+                    for (auto cf : obj) {
+                        std::string_view k;
+                        if (cf.escaped_key().get(k) != simdjson::SUCCESS) {
+                            return false;
+                        }
+                        if (k == "coin") {
+                            if (!readString(cf.value(), c.coin)) { return false; }
+                        } else if (k == "oid") {
+                            if (!readUint(cf.value(), c.oid)) { return false; }
+                        }
+                    }
+                    nonUserCancels.push_back(c);
+                }
+                h.onNonUserCancels(nonUserCancels);
+            }
+        }
+        return true;
+    }
+
+    bool onUserFundings(od::document& doc, WsMessageHandler& h) {
+        od::object data;
+        if (doc["data"].get_object().get(data) != simdjson::SUCCESS) {
+            return false;
+        }
+        fundings.clear();
+        for (auto field : data) {
+            std::string_view key;
+            if (field.escaped_key().get(key) != simdjson::SUCCESS) {
+                return false;
+            }
+            if (key == "fundings") {
+                od::array arr;
+                if (field.value().get_array().get(arr) != simdjson::SUCCESS) {
+                    return false;
+                }
+                for (auto elem : arr) {
+                    od::value v;
+                    if (elem.get(v) != simdjson::SUCCESS) {
+                        return false;
+                    }
+                    UserFundingMsg f;
+                    if (!readFundingEntry(v, f)) {
+                        return false;
+                    }
+                    fundings.push_back(f);
+                }
+            }
+        }
+        h.onUserFundings(fundings);
+        return true;
+    }
+
+    bool onActiveAssetData(od::document& doc, WsMessageHandler& h) {
+        od::object data;
+        if (doc["data"].get_object().get(data) != simdjson::SUCCESS) {
+            return false;
+        }
+        ActiveAssetDataMsg msg;
+        for (auto field : data) {
+            std::string_view key;
+            if (field.escaped_key().get(key) != simdjson::SUCCESS) {
+                return false;
+            }
+            if (key == "user") {
+                if (!readString(field.value(), msg.user)) { return false; }
+            } else if (key == "coin") {
+                if (!readString(field.value(), msg.coin)) { return false; }
+            } else if (key == "markPx") {
+                if (!readDecimal(field.value(), msg.markPx)) { return false; }
+            } else if (key == "leverage") {
+                od::object lev;
+                if (field.value().get_object().get(lev) != simdjson::SUCCESS) {
+                    return false;
+                }
+                for (auto lf : lev) {
+                    std::string_view k;
+                    if (lf.escaped_key().get(k) != simdjson::SUCCESS) {
+                        return false;
+                    }
+                    if (k == "type") {
+                        std::string_view type;
+                        if (!readString(lf.value(), type)) { return false; }
+                        msg.isCross = type != "isolated";
+                    } else if (k == "value") {
+                        std::uint64_t v = 0;
+                        if (!readUint(lf.value(), v)) { return false; }
+                        msg.leverage = static_cast<std::uint32_t>(v);
+                    }
+                }
+            } else if (key == "maxTradeSzs" || key == "availableToTrade") {
+                od::array arr;
+                if (field.value().get_array().get(arr) != simdjson::SUCCESS) {
+                    return false;
+                }
+                std::size_t side = 0;
+                for (auto elem : arr) {
+                    od::value v;
+                    if (elem.get(v) != simdjson::SUCCESS) {
+                        return false;
+                    }
+                    Decimal value;
+                    if (!readDecimal(v, value)) {
+                        return false;
+                    }
+                    if (key == "maxTradeSzs") {
+                        (side == 0 ? msg.maxTradeSzBuy : msg.maxTradeSzSell) = value;
+                    } else {
+                        (side == 0 ? msg.availableToTradeBuy : msg.availableToTradeSell) = value;
+                    }
+                    if (++side == 2) {
+                        break;
+                    }
+                }
+            }
+        }
+        h.onActiveAssetData(msg);
+        return true;
+    }
+
+    bool onNotification(od::document& doc, WsMessageHandler& h) {
+        NotificationMsg msg;
+        if (doc["data"]["notification"].get_string().get(msg.text) != simdjson::SUCCESS) {
+            return false;
+        }
+        h.onNotification(msg);
         return true;
     }
 
@@ -618,6 +912,23 @@ struct WsMessageParser::Impl {
         }
         h.onSubscriptionResponse(msg);
         return true;
+    }
+};
+
+struct WsMessageParser::Impl {
+    std::vector<std::unique_ptr<ParseState>> states;  // one per active nesting level
+    std::size_t depth{0};
+    Stats stats{};
+
+    bool parse(std::string_view frame, WsMessageHandler& handler) {
+        if (states.size() <= depth) {
+            states.push_back(std::make_unique<ParseState>());
+        }
+        ParseState& state = *states[depth];
+        ++depth;
+        const bool ok = state.parse(frame, handler, stats);
+        --depth;
+        return ok;
     }
 };
 

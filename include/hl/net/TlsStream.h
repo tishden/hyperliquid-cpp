@@ -25,6 +25,12 @@ struct TlsOptions {
     std::int64_t connectTimeoutMs{10'000};
     /// Set TCP_NODELAY (disable Nagle) — on by default for request/response latency.
     bool tcpNoDelay{true};
+    /**
+     * Fail the connection when this many bytes are waiting to be written (0 = unbounded).
+     * Protects against unbounded memory growth when a peer stops reading: the stream is closed and
+     * the owner reconnects, which is what a stalled venue connection needs anyway.
+     */
+    std::size_t maxOutboxBytes{8 * 1024 * 1024};
 };
 
 /// Callbacks of a TlsStream. Invoked on the event-loop thread.
@@ -90,15 +96,20 @@ private:
     int fd_{-1};
     bool secure_{true};
     bool wantWrite_{false};
+    bool reading_{false};  // guards re-entry from a listener that pumps the event loop
     std::uint32_t currentMask_{0};
     ::ssl_ctx_st* ctx_{nullptr};
     ::ssl_st* ssl_{nullptr};
     State state_{State::Idle};
     std::string host_;
     std::uint16_t port_{0};
-    std::vector<std::array<char, 128>> addrs_;  // resolved sockaddr_storage blobs
-    std::vector<std::uint32_t> addrLens_;
-    std::vector<int> addrFamilies_;
+    /// One resolved endpoint (a sockaddr_storage blob plus its length and family).
+    struct Endpoint {
+        std::array<char, 128> address{};
+        std::uint32_t length{0};
+        int family{0};
+    };
+    std::vector<Endpoint> endpoints_;
     std::size_t addrCursor_{0};
     std::size_t attemptsLeft_{0};
     std::size_t rotation_{0};

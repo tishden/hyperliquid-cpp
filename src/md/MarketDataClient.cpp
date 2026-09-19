@@ -37,6 +37,10 @@ std::string MarketDataClient::subscriptionJson(std::string_view type, std::strin
 }
 
 void MarketDataClient::subscribeL2Book(std::string_view coin, L2BookOptions options) {
+    if (!isValidCoinName(coin)) {
+        logf(LogLevel::Error, "md: refusing to subscribe to invalid coin name");
+        return;
+    }
     std::string json = subscriptionJson("l2Book", coin);
     if (options.nSigFigs) {
         json.pop_back();
@@ -67,9 +71,70 @@ void MarketDataClient::subscribeAssetCtx(std::string_view coin) {
 
 void MarketDataClient::subscribeAllMids() { session_.subscribe(subscriptionJson("allMids")); }
 
+std::string MarketDataClient::userSubscriptionJson(std::string_view type, const Address& user) {
+    std::string json = R"({"type":")";
+    json += type;
+    json += R"(","user":")";
+    json += toHex(user);
+    json += R"("})";
+    return json;
+}
+
+void MarketDataClient::subscribeCandle(std::string_view coin, std::string_view interval) {
+    if (!isValidCoinName(coin)) {
+        logf(LogLevel::Error, "md: refusing to subscribe to invalid coin name");
+        return;
+    }
+    std::string json = R"({"type":"candle","coin":")";
+    json += coin;
+    json += R"(","interval":")";
+    json += interval;
+    json += R"("})";
+    session_.subscribe(std::move(json));
+}
+
+void MarketDataClient::subscribeUserEvents(const Address& user) {
+    session_.subscribe(userSubscriptionJson("userEvents", user));
+}
+
+void MarketDataClient::subscribeUserFundings(const Address& user) {
+    session_.subscribe(userSubscriptionJson("userFundings", user));
+}
+
+void MarketDataClient::subscribeActiveAssetData(const Address& user, std::string_view coin) {
+    if (!isValidCoinName(coin)) {
+        logf(LogLevel::Error, "md: refusing to subscribe to invalid coin name");
+        return;
+    }
+    std::string json = R"({"type":"activeAssetData","user":")";
+    json += toHex(user);
+    json += R"(","coin":")";
+    json += coin;
+    json += R"("})";
+    session_.subscribe(std::move(json));
+}
+
+void MarketDataClient::subscribeNotifications(const Address& user) {
+    session_.subscribe(userSubscriptionJson("notification", user));
+}
+
 void MarketDataClient::subscribeRaw(std::string json) { session_.subscribe(std::move(json)); }
 
-void MarketDataClient::unsubscribeRaw(std::string_view json) { session_.unsubscribe(json); }
+void MarketDataClient::unsubscribeRaw(std::string_view json) {
+    session_.unsubscribe(json);
+    // Drop a book that is no longer fed, so book(coin) cannot return a frozen snapshot.
+    if (json.find(R"("type":"l2Book")") != std::string_view::npos) {
+        const auto coinStart = json.find(R"("coin":")");
+        if (coinStart != std::string_view::npos) {
+            const auto from = coinStart + 8;
+            const auto to = json.find('"', from);
+            if (to != std::string_view::npos) {
+                const std::string_view coin = json.substr(from, to - from);
+                std::erase_if(books_, [coin](const std::unique_ptr<OrderBook>& b) { return b->coin() == coin; });
+            }
+        }
+    }
+}
 
 const OrderBook* MarketDataClient::book(std::string_view coin) const noexcept {
     for (const auto& b : books_) {
@@ -125,6 +190,12 @@ void MarketDataClient::onAssetCtx(const AssetCtxMsg& msg) { listener_.onAssetCtx
 void MarketDataClient::onAllMids(const AllMidsMsg& msg) { listener_.onAllMids(msg); }
 void MarketDataClient::onOrderUpdates(std::span<const OrderUpdateMsg> updates) { listener_.onOrderUpdates(updates); }
 void MarketDataClient::onUserFills(const UserFillsMsg& msg) { listener_.onUserFills(msg); }
+void MarketDataClient::onCandle(const CandleMsg& msg) { listener_.onCandle(msg); }
+void MarketDataClient::onLiquidation(const LiquidationMsg& msg) { listener_.onLiquidation(msg); }
+void MarketDataClient::onNonUserCancels(std::span<const NonUserCancelMsg> c) { listener_.onNonUserCancels(c); }
+void MarketDataClient::onUserFundings(std::span<const UserFundingMsg> f) { listener_.onUserFundings(f); }
+void MarketDataClient::onActiveAssetData(const ActiveAssetDataMsg& msg) { listener_.onActiveAssetData(msg); }
+void MarketDataClient::onNotification(const NotificationMsg& msg) { listener_.onNotification(msg); }
 void MarketDataClient::onPostResponse(const PostResponseMsg& msg) { listener_.onPostResponse(msg); }
 void MarketDataClient::onSubscriptionResponse(const SubscriptionResponseMsg& msg) {
     listener_.onSubscriptionResponse(msg);
