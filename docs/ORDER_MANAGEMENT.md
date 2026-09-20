@@ -359,7 +359,8 @@ resting unmanaged.
 | the cloid rests in `frontendOpenOrders` (after an unresolved modify) | that oid is adopted and the order stays live |
 | an open order under a cloid the table has buried terminally | revived from the listing — the venue is authoritative about what rests now |
 | `order` with status | apply status (terminal rules hold), store oid, update price/size |
-| `unknownOid` | a `PendingNew` order becomes `Rejected` ("order not found on venue"); other states unchanged |
+| `unknownOid` for an order with **no oid** | asked again up to 3 times, 1 s apart — the venue answers "unknown" until it has processed the action, and a fresh order written off here would rest unmanaged. Only then `Rejected` ("order not found on venue") |
+| `unknownOid` for an order with an oid | state unchanged |
 | request failed | retried every 2 s while the order is live and the client runs |
 
 Timeout behaviour in numbers (defaults): a post without an answer is resolved after at most

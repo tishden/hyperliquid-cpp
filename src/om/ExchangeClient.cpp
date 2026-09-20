@@ -65,6 +65,11 @@ std::string restBase(const ExchangeConfig& config) {
     return config.restUrlOverride.empty() ? std::string{restUrl(config.network)} : config.restUrlOverride;
 }
 
+/// How often the venue may answer "unknown" about an order it has not acknowledged before the
+/// client concludes it was never accepted, and how long it waits between those asks.
+constexpr int kNotFoundProbes = 3;
+constexpr std::int64_t kNotFoundRetryMs = 1'000;
+
 bool isTransportFailure(const Error& e) noexcept {
     return e.kind == Error::Kind::Transport || e.kind == Error::Kind::Timeout;
 }
@@ -1319,15 +1324,33 @@ void ExchangeClient::reconcile(const Cloid& cloid) {
         const OrderStatusInfo& info = r.value();
         Order& o = t->order;
         if (!info.found) {
-            if (o.state == OrderState::PendingNew) {
-                o.state = OrderState::Rejected;
-                if (o.lastError.empty()) {
-                    o.lastError = "order not found on venue";
-                }
-                emit(*t);
+            if (o.state != OrderState::PendingNew) {
+                return;
             }
+            // The order has no oid, so its action was written to a socket that died before the
+            // acknowledgement came back — and the venue may simply not have processed it yet.
+            // "Unknown" on the first ask is therefore not a verdict: declaring the order rejected
+            // while the venue goes on to accept it leaves it resting with nobody managing it.
+            if (t->notFoundProbes < kNotFoundProbes) {
+                ++t->notFoundProbes;
+                loop_.addTimer(kNotFoundRetryMs, [this, cloid, alive = std::weak_ptr<int>(lifetime_)] {
+                    if (alive.expired()) {
+                        return;
+                    }
+                    if (Tracked* again = find(cloid); again != nullptr && again->order.state == OrderState::PendingNew) {
+                        reconcile(cloid);
+                    }
+                });
+                return;
+            }
+            o.state = OrderState::Rejected;
+            if (o.lastError.empty()) {
+                o.lastError = "order not found on venue";
+            }
+            emit(*t);
             return;
         }
+        t->notFoundProbes = 0;
         if (o.oid != 0 && info.order.oid != 0 && info.order.oid != o.oid) {
             // The answer is about a generation this order has already replaced (see above) or one
             // it has not adopted yet. Neither says anything about the oid we are tracking.

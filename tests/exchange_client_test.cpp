@@ -454,7 +454,33 @@ TEST_F(ExchangeClientTest, UnknownAfterTimeoutBecomesRejected) {
     fake.autoRespond = false;
     auto client = startReady(hl::ActionTransport::WebSocket, 100);
     const auto cloid = client->placeOrder(btcBuy()).value();
-    ASSERT_TRUE(runUntil(loop, [&] { return client->findOrder(cloid)->state == OrderState::Rejected; }));
+    // The verdict is not immediate: an order with no acknowledgement is asked about a few times
+    // first, because the venue may still be processing the action (see the test below).
+    ASSERT_TRUE(runUntil(loop, [&] { return client->findOrder(cloid)->state == OrderState::Rejected; }, 8000));
+    EXPECT_GE(client->stats().reconciles, 2U);
+}
+
+// An order whose acknowledgement went down with the socket has no oid, so it can only be asked
+// about by cloid — and the venue answers "unknown" until it has processed the action. Taking that
+// first answer as a verdict marks the order rejected while it goes on to rest on the venue, which
+// is exactly how the testnet soak leaked a fresh quote.
+TEST_F(ExchangeClientTest, UnacknowledgedOrderIsAskedAgainBeforeBeingDeclaredRejected) {
+    fake.autoRespond = false;
+    auto client = startReady(hl::ActionTransport::WebSocket, 100);
+    const auto cloid = client->placeOrder(btcBuy()).value();
+    // The venue is asked more than once while it keeps answering "unknown", and the order stays
+    // pending meanwhile — a single "unknown" must not be a verdict.
+    ASSERT_TRUE(runUntil(loop, [&] { return client->stats().reconciles >= 2; }, 5000))
+        << "the client asked once and gave up; state is " << hl::toString(client->findOrder(cloid)->state);
+    EXPECT_EQ(client->findOrder(cloid)->state, OrderState::PendingNew);
+
+    // The venue got there in the end: the order is resting.
+    fake.orderStatusByKey[cloid.toString()] =
+        R"({"status":"order","order":{"order":{"coin":"BTC","side":"B","limitPx":"50000.0","sz":"0.002","oid":4242,)"
+        R"("timestamp":1,"origSz":"0.002","cloid":")" + cloid.toString() + R"("},"status":"open","statusTimestamp":2}})";
+    ASSERT_TRUE(runUntil(loop, [&] { return client->findOrder(cloid)->state == OrderState::Open; }, 5000));
+    EXPECT_EQ(client->findOrder(cloid)->oid, 4242U);
+    EXPECT_EQ(client->liveOrders("BTC").size(), 1U);
 }
 
 TEST_F(ExchangeClientTest, HttpTransport) {

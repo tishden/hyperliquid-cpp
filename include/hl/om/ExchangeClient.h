@@ -377,6 +377,7 @@ private:
         Decimal ackAvgPx{};
         std::vector<std::uint64_t> retiredOids{};  ///< bounded: only the most recent amendments matter
         bool canceledDuringModify{false};
+        int notFoundProbes{0};  ///< how often the venue has answered "unknown" about an unacked order
 
         /// What the listener was last told, so the same news is not delivered twice: one venue
         /// rejection can arrive as an `orderUpdates` message, as an action acknowledgement and as a

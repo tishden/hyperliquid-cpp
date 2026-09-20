@@ -25,6 +25,14 @@ All notable changes to this project are documented here. The project follows
   names the first one — so an unresolved modify is now reconciled against `frontendOpenOrders`,
   where the live generation of a cloid can actually be identified; the oid probe remains the
   fallback for a cloid that is not resting at all.
+- **A fresh order could be written off as rejected while the venue was still accepting it.** When
+  the acknowledgement of a *placement* goes down with the socket the order has no oid, so it can
+  only be asked about by cloid — and the venue answers "unknown" until it has processed the action,
+  which takes about as long as its round trip. That first answer was taken as a verdict: the order
+  was marked `Rejected`, the strategy freed the quote slot, and the order then appeared on the venue
+  with nobody managing it (seen in the soak: a fresh ask resting untouched for minutes). An order
+  with no acknowledgement is now asked about up to three times, a second apart, before it is
+  declared rejected.
 - **And the third way to lose the same order: a late `canceled` for a generation two amendments
   ago.** `modify` replaces an order with a new oid under the same cloid, and the update announcing
   the *old* one's cancellation can arrive after several further amendments. The bounded list of
