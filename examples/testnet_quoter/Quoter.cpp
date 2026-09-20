@@ -58,16 +58,17 @@ void Quoter::onOrderUpdate(const hl::Order& order) {
     if (order.coin != settings_.coin || order.external) {
         return;
     }
+    Slot& slot = slots_[idx(order.side)];
+    if (slot.cloid != order.cloid) {
+        return;  // an order this side no longer owns: already accounted for when it went terminal
+    }
     if (order.state == hl::OrderState::Rejected) {
+        // Count and report the rejection once. A rejected order can be updated again as its
+        // pending flags settle (the venue's answer arrives as a stream update and as the
+        // acknowledgement of the action), and only the first of those is news.
         ++rejects_;
         std::printf("[ex] %s %s @ %s rejected: %s\n", std::string{hl::toString(order.side)}.c_str(), str(order.origSz).c_str(),
                     str(order.px).c_str(), order.lastError.c_str());
-    }
-    Slot& slot = slots_[idx(order.side)];
-    if (slot.cloid != order.cloid) {
-        return;
-    }
-    if (order.state == hl::OrderState::Rejected) {
         // Exponential back-off on repeated rejections (1 s, 2 s, 4 s … 60 s) so a permanent
         // error such as an unfunded account does not turn into a request storm.
         ++slot.consecutiveRejects;

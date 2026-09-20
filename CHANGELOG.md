@@ -23,10 +23,13 @@ All notable changes to this project are documented here. The project follows
 - **One venue event was reported to the strategy up to three times.** A rejection arrives as an
   `orderUpdates` message, as the acknowledgement of the action that caused it and as the
   reconciliation answer; each one fired `onOrderUpdate`, although the second and third changed
-  nothing. The demo quoter counted a single `badAloPxRejected` as three rejections in the testnet
-  soak and backed off for 4 s instead of 1 s — a risk rule keyed on consecutive rejections would
-  have been three times as trigger-happy. `onOrderUpdate` now fires only when something observable
-  changed, which is what its contract always said.
+  nothing observable. In the testnet soak a single `badAloPxRejected` was delivered three times and
+  the demo quoter's summary counted three rejections (its back-off was applied once — that is keyed
+  on the quote slot, which is freed by the first terminal update). `onOrderUpdate` now fires only
+  when something observable changed, which is what its contract always said.
+- Demo quoter: the rejection counter and log line moved behind the quote-slot check, so an order
+  updated again after it was rejected — its pending flags settling is an observable change, so the
+  client does deliver it — is reported once rather than per update.
 - `CMakeLists.txt` and `Doxyfile` still declared 1.3.0 while the library reported 1.4.0.
 
 ### Documentation
