@@ -20,6 +20,13 @@ All notable changes to this project are documented here. The project follows
   (`adoptExistingOrders`, on by default) instead of being ignored, so an order whose acknowledgement
   was lost with the socket reappears in `liveOrders()` and is covered by `cancelAll()`. The listing is
   fetched even when the table holds no live orders — the case where a lost order is invisible.
+- **One venue event was reported to the strategy up to three times.** A rejection arrives as an
+  `orderUpdates` message, as the acknowledgement of the action that caused it and as the
+  reconciliation answer; each one fired `onOrderUpdate`, although the second and third changed
+  nothing. The demo quoter counted a single `badAloPxRejected` as three rejections in the testnet
+  soak and backed off for 4 s instead of 1 s — a risk rule keyed on consecutive rejections would
+  have been three times as trigger-happy. `onOrderUpdate` now fires only when something observable
+  changed, which is what its contract always said.
 - `CMakeLists.txt` and `Doxyfile` still declared 1.3.0 while the library reported 1.4.0.
 
 ### Documentation

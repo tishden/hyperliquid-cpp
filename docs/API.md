@@ -1049,6 +1049,12 @@ orders (see below). Then:
 | `Rejected` | → `Rejected`; `lastError = statusText` |
 | `Unknown` | `lastError = statusText` |
 
+**One change, one callback.** A single venue event commonly arrives three ways — the `orderUpdates`
+message, the acknowledgement of the action that caused it, and the reconciliation answer that
+follows a failed one. `onOrderUpdate` fires only when something observable actually changed (state,
+oid, price, size, filled size, average fill price, `cancelPending` / `modifyPending`, `lastError`),
+so a strategy that counts rejections or backs off on them counts each one once.
+
 **Terminal states are sticky** for `orderUpdates` and reconciliation results: once an order is `Filled`,
 `Canceled` or `Rejected`, only a `Filled` status is still applied (an upgrade, e.g. a cancel that raced a fill);
 any other status only clears `cancelPending`.

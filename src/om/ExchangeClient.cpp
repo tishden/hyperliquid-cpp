@@ -1417,6 +1417,13 @@ Decimal ExchangeClient::position(std::string_view coin) const noexcept {
 }
 
 void ExchangeClient::emit(Tracked& t) {
+    const Order& o = t.order;
+    const Tracked::Emitted now{o.state,         o.oid,           o.px,   o.origSz, o.filledSz,
+                               o.avgFillPx,     o.cancelPending, o.modifyPending, true,     o.lastError};
+    if (t.emitted == now) {
+        return;  // the same news twice: onOrderUpdate reports changes, not messages
+    }
+    t.emitted = now;
     t.order.updatedMs = EventLoop::wallClockMs();
     listener_.onOrderUpdate(t.order);
 }

@@ -172,7 +172,9 @@ public:
     virtual void onReady() {}
     /// Private stream lost; the client reconnects and reconciles automatically.
     virtual void onDisconnected(std::string_view /*reason*/) {}
-    /// Any change of an order's state, fill quantity, price or error.
+    /// Any change of an order's state, fill quantity, price, pending flags or error — once per
+    /// change: one venue event can reach the client as a stream update, an acknowledgement and a
+    /// reconciliation answer, and an update that changes nothing observable is not delivered.
     virtual void onOrderUpdate(const Order& /*order*/) {}
     /// A new execution of one of the account's orders (deduplicated by trade id).
     virtual void onFill(const Fill& /*fill*/) {}
@@ -375,6 +377,24 @@ private:
         Decimal ackAvgPx{};
         std::vector<std::uint64_t> retiredOids{};  ///< bounded: only the most recent amendments matter
         bool canceledDuringModify{false};
+
+        /// What the listener was last told, so the same news is not delivered twice: one venue
+        /// rejection can arrive as an `orderUpdates` message, as an action acknowledgement and as a
+        /// reconciliation answer, and `onOrderUpdate` promises *changes*.
+        struct Emitted {
+            OrderState state{OrderState::PendingNew};
+            std::uint64_t oid{0};
+            Decimal px{};
+            Decimal origSz{};
+            Decimal filledSz{};
+            Decimal avgFillPx{};
+            bool cancelPending{false};
+            bool modifyPending{false};
+            bool everEmitted{false};
+            std::string lastError{};
+            bool operator==(const Emitted&) const = default;
+        };
+        Emitted emitted{};
 
         void retireOid(std::uint64_t oid) {
             retiredOids.push_back(oid);

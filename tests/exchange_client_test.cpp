@@ -698,6 +698,40 @@ TEST_F(ExchangeClientTest, AdoptsOrdersAlreadyOpenOnTheVenue) {
     ASSERT_TRUE(runUntil(loop, [&] { return client->liveOrders("ETH").empty(); }));
 }
 
+// One venue rejection reaches the client three ways — the orderUpdates message, the acknowledgement
+// of the action that caused it, and the reconciliation answer. onOrderUpdate reports changes, not
+// messages, so the strategy must hear about it once: a quoter that counts rejections (and backs off
+// on them) would otherwise triple-count a single one.
+TEST_F(ExchangeClientTest, OneRejectionIsReportedOnce) {
+    auto client = startReady();
+    const auto cloid = client->placeOrder(btcBuy()).value();
+    ASSERT_TRUE(runUntil(loop, [&] { return client->findOrder(cloid)->state == OrderState::Open; }));
+    const std::uint64_t oid = client->findOrder(cloid)->oid;
+    listener.updates.clear();
+
+    // A post-only amendment that would cross: the venue rejects the new order and the answer comes
+    // back on every channel at once.
+    fake.orderStatusByKey[std::to_string(oid)] =
+        R"({"status":"order","order":{"order":{"coin":"BTC","side":"B","limitPx":"50000.0","sz":"0.002","oid":)" +
+        std::to_string(oid) + R"(,"timestamp":1,"origSz":"0.002","cloid":")" + cloid.toString() +
+        R"("},"status":"badAloPxRejected","statusTimestamp":2}})";
+    fake.actionPayload = [](const std::string& type, const std::string&) -> std::string {
+        if (type == "batchModify") {
+            return R"({"status":"ok","response":{"type":"batchModify","data":{"statuses":[{"error":"badAloPxRejected"}]}}})";
+        }
+        return {};
+    };
+    ASSERT_FALSE(client->modify(cloid, d("50500"), d("0.002")));
+    ASSERT_TRUE(runUntil(loop, [&] { return client->findOrder(cloid)->state == OrderState::Rejected; }));
+    fake.pushOrderUpdate("BTC", "B", "50000", "0.002", "0.002", oid, cloid.toString(), "badAloPxRejected");
+    loop.runOnce(50);
+    loop.runOnce(50);
+
+    const auto rejected = std::count_if(listener.updates.begin(), listener.updates.end(),
+                                        [](const hl::Order& o) { return o.state == OrderState::Rejected; });
+    EXPECT_EQ(rejected, 1) << "one rejection, one callback";
+}
+
 // A reconnect is the moment an order can slip out of the table: the acknowledgement that would
 // have named its oid went down with the socket. Whatever the venue still reports open and the
 // client cannot account for must be adopted, not left resting unmanaged.
