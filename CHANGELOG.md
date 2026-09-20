@@ -6,91 +6,61 @@ All notable changes to this project are documented here. The project follows
 ## [1.4.1] — 2026-09-20
 
 ### Fixed
-- **A resting order could be dropped from the table and left working on the venue.** Reconciliation
-  probed `orderStatus` by **cloid**, and the venue resolves a cloid to the *first* order placed with
-  it while `modify` carries the cloid over to a new oid: after an amendment the probe answered
-  `canceled` about the superseded generation. The client believed it, marked the live order terminal
-  and rewrote its oid to the dead one; the strategy freed the quote slot and placed a new order while
-  the real one kept resting — unmanaged, and still able to fill. Reconciliation now probes by oid
-  whenever the order has one (cloid remains the fallback for an order whose acknowledgement never
-  arrived) and ignores an answer about any other oid. Found by an eight-hour testnet soak: the venue
-  closes idle WebSockets every few minutes (`code 1000: Expired`), and every drop with an amendment in
-  flight leaked one order.
-- **The mirror of the same mistake: a modify that *did* land also lost the order.** When the
-  acknowledgement of an amendment is lost with the socket, the venue may already have applied it —
-  the oid the client knows is canceled and a new one carrying the same cloid rests. Probing that oid
-  answers "canceled", so the client buried a live order exactly as before (found by the soak two
-  hours after the first fix, with the quote still resting on testnet under oid 60562251190). Neither
-  single-order question can find the successor — an oid probe names a generation, a cloid probe
-  names the first one — so an unresolved modify is now reconciled against `frontendOpenOrders`,
-  where the live generation of a cloid can actually be identified; the oid probe remains the
-  fallback for a cloid that is not resting at all.
-- **Amending a partially filled order carried its fills onto the replacement.** `modify` does not
-  change an order — the venue cancels the one that holds those fills and opens a fresh one of the
-  requested size with nothing filled. The client kept the old generation's filled size, so
-  `remainingSz()` understated what was resting, and once those fills reached the new `origSz` the
-  order was declared `Filled` while it sat in the book. Fill accounting now belongs to the
-  generation that earned it: a new oid starts it afresh, and a late fill naming a generation the
-  order has left behind moves the position (fills are absolute statements about it) without
+- **Orders could be left resting on the venue with the client no longer managing them.** `modify`
+  does not change an order: the venue cancels the one it has and opens a new one carrying the same
+  cloid. An order is therefore a chain of generations, and every identifier names one link of it.
+  The client acted on answers and updates that described a link the order had already left behind,
+  and the result always looked the same from outside — a quote in the book that the strategy had
+  stopped managing and could still be filled. Five paths did this, and an eight-hour testnet soak
+  found all five: the venue closes each WebSocket about every ten minutes, so an action was in
+  flight for one of them often enough.
+
+  - Reconciliation asked `orderStatus` by cloid, which the venue answers about the *first* order
+    placed under it. It now asks by oid wherever the order has one.
+  - After a modify whose acknowledgement was lost, asking by that oid answers "canceled", because
+    the amendment replaced it. An unresolved modify is now settled against `frontendOpenOrders` —
+    the only answer that says which oid carries the cloid now.
+  - The venue can answer a `batchModify` with an error for an amendment it has applied. Those errors
+    are settled the same way.
+  - A `canceled` update for a generation several amendments back was read as news about the live
+    order. Updates naming an oid older than the tracked one are now dropped: the venue issues oids
+    in increasing order, so they can only describe a link already left behind.
+  - A placement whose acknowledgement was lost has no oid, so it can only be asked about by cloid —
+    and the venue answers "unknown" until it has processed the action. That answer is no longer a
+    verdict on the first ask: the order is asked about three times, a second apart.
+
+  Two safety nets were added behind those fixes. After a reconnect, an open order that matches
+  nothing in the table is adopted, and one the table has buried under a different oid is revived
+  from the listing. `docs/ORDER_MANAGEMENT.md` §9 states the invariant all of this enforces.
+- Amending a partially filled order carried its fills onto the replacement. The venue opens the new
+  order with nothing filled, so `remainingSz()` understated what was resting, and once the carried
+  fills reached the new `origSz` a working order was declared `Filled`. Fill accounting now belongs
+  to the generation that earned it, and a late fill naming an earlier one moves the position without
   counting against what rests now.
-- **A venue error on an amendment was believed too literally.** The venue can answer a
-  `batchModify` with an error for an amendment it has nonetheless applied — the old oid canceled,
-  the replacement resting under the same cloid. That answer sent reconciliation to the oid the
-  client knew, which reported "canceled", and the resting replacement was lost. Errors on an
-  amendment are now settled against the open-orders listing like any other unresolved modify; when
-  the cloid is not resting the rejection stands as before.
-- Venue-side rejections carried inside an acknowledgement are now **logged** (`exchange: <cloid>
-  rejected by the venue: …`). They were only stored in `Order::lastError`, so an order could change
-  its fate with nothing in the log to explain why — which is precisely how the failure above hid.
-- **A fresh order could be written off as rejected while the venue was still accepting it.** When
-  the acknowledgement of a *placement* goes down with the socket the order has no oid, so it can
-  only be asked about by cloid — and the venue answers "unknown" until it has processed the action,
-  which takes about as long as its round trip. That first answer was taken as a verdict: the order
-  was marked `Rejected`, the strategy freed the quote slot, and the order then appeared on the venue
-  with nobody managing it (seen in the soak: a fresh ask resting untouched for minutes). An order
-  with no acknowledgement is now asked about up to three times, a second apart, before it is
-  declared rejected.
-- **And the third way to lose the same order: a late `canceled` for a generation two amendments
-  ago.** `modify` replaces an order with a new oid under the same cloid, and the update announcing
-  the *old* one's cancellation can arrive after several further amendments. The bounded list of
-  retired oids only remembers the last few, so at one amendment per second such an update was taken
-  for news about the live order, which it then buried. Updates about an oid older than the tracked
-  one are now dropped outright: the venue issues oids in increasing order, so they can only describe
-  a generation the order has left behind. `docs/ORDER_MANAGEMENT.md` §9 states the invariant these
-  three fixes share.
-- Belt and braces: an order the venue lists as open under a different oid than the one the table
-  buried is **revived** from that listing. Terminal states are sticky against stale updates, not
-  against the venue's current answer to "what is resting right now".
-- After a reconnect, an open order on the venue that matches nothing in the table is now **adopted**
-  (`adoptExistingOrders`, on by default) instead of being ignored, so an order whose acknowledgement
-  was lost with the socket reappears in `liveOrders()` and is covered by `cancelAll()`. The listing is
-  fetched even when the table holds no live orders — the case where a lost order is invisible.
-- **One venue event was reported to the strategy up to three times.** A rejection arrives as an
-  `orderUpdates` message, as the acknowledgement of the action that caused it and as the
-  reconciliation answer; each one fired `onOrderUpdate`, although the second and third changed
-  nothing observable. In the testnet soak a single `badAloPxRejected` was delivered three times and
-  the demo quoter's summary counted three rejections (its back-off was applied once — that is keyed
-  on the quote slot, which is freed by the first terminal update). `onOrderUpdate` now fires only
-  when something observable changed, which is what its contract always said.
-- Demo quoter: the rejection counter and log line moved behind the quote-slot check, so an order
-  updated again after it was rejected — its pending flags settling is an observable change, so the
-  client does deliver it — is reported once rather than per update.
+- One venue event reached the strategy up to three times: a rejection arrives as an `orderUpdates`
+  message, as the acknowledgement of the action that caused it, and as the reconciliation answer.
+  `onOrderUpdate` now fires only when something observable changed, which is what its contract
+  always said. The demo quoter counts a rejection once, too.
+- Venue rejections carried inside an acknowledgement are logged (`exchange: <cloid> rejected by the
+  venue: …`). They only reached `Order::lastError` before, so an order could change its fate with
+  nothing in the log to explain why.
 - `CMakeLists.txt` and `Doxyfile` still declared 1.3.0 while the library reported 1.4.0.
 
 ### Changed
-- **The log is timestamped.** Every line from the default log sink, and every event line the demo
-  quoter prints, now starts with `HH:MM:SS.mmm`. A trading log without a clock cannot be lined up
-  with the venue's own record of the same moment, which is the first thing anyone does when an order
-  behaves unexpectedly — during the soak that gap cost hours of guessing. The end-of-run summary
-  block stays unstamped; it is one block, not a stream of events.
+- Every line from the default log sink, and every event line the demo quoter prints, now starts with
+  `HH:MM:SS.mmm`. A trading log without a clock cannot be lined up with the venue's own record of the
+  same moment, which is the first thing anyone reaches for when an order behaves unexpectedly. The
+  end-of-run summary stays unstamped: it is one block, not a stream of events.
+- Order state transitions are logged at debug level (cloid, oid, from, to, reason).
 
 ### Documentation
-- `docs/ORDER_MANAGEMENT.md` §10 states why reconciliation cannot use the cloid after an amendment,
-  and that unaccounted open orders are adopted on reconnect.
-- §11 records what the venue actually does with connections, measured: testnet closes every WebSocket
-  after ~10–12 minutes (`code 1000: Expired`) whether it is busy or idle, pinged or not, while mainnet
-  held the same sockets for a full 25-minute measurement. A heartbeat does not avoid that close — it
-  avoids the other one, where an unpinged socket is dropped without a close frame (code 1006).
+- `docs/ORDER_MANAGEMENT.md` §9 states the generation invariant; §10 covers what reconciliation may
+  ask and when, and §11 records what the venue does with connections: testnet closes every WebSocket
+  after 10–12 minutes (`code 1000: Expired`), busy or idle, pinged or not, while mainnet held the
+  same sockets for a full 25-minute measurement. A heartbeat does not prevent that close — it
+  prevents the other one, where an unpinged socket is dropped without a close frame (code 1006).
+- `docs/BENCHMARKS.md` reports what the library does today rather than what it used to do, measured
+  on one stand and stated with the environment that produced it.
 
 ## [1.4.0] — 2026-09-19
 
@@ -98,7 +68,7 @@ All notable changes to this project are documented here. The project follows
 - `docs/COMPARISON.md` — a side-by-side with the free MIT-licensed C++ SDK for Hyperliquid, stating
   where that one is ahead (endpoint breadth, price) as plainly as where this one is: the stateful
   trading layer above a transport SDK, engineered latency, three private dependencies, live mainnet
-  verification, warranty and maintenance. A condensed version is a section of the Russian offer PDF.
+  verification, warranty and maintenance.
 - `scripts/ci.sh` — one command for everything that must be green before a release: the compiler and
   sanitizer matrix, documentation link checking, a scan for keys and absolute paths in tracked
   files, and a version/changelog consistency check. Toolchains the machine lacks are skipped rather
@@ -106,9 +76,6 @@ All notable changes to this project are documented here. The project follows
 - Copyright and `SPDX-License-Identifier: LicenseRef-hyperliquid-cpp` headers in every source file,
   script, CMake file and the Dockerfile; the licence files and the documentation now name the
   copyright holder.
-- `docs/hyperliquid-cpp-offer-ru.pdf` — a commercial one-pager in Russian describing what
-  is being sold, positioned as a fast Hyperliquid client rather than a trading platform. Source in
-  `docs/offer-ru.html`, rebuilt with `scripts/offer-pdf.sh`.
 - README: the testnet demo written out end to end — build, key-free dry run, credentials, a live
   testnet run and its real output, including the latency counters.
 - `ExchangeClient::spotTokenBalance(token)` — the spot balance of one token, populated when

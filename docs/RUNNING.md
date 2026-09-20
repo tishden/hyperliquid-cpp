@@ -414,6 +414,23 @@ position and reaction time consistent:
    compaction jitter if observed.
 7. Host networking in containers (`--network host`).
 
+### What a long run costs in requests
+
+The venue's request budget is per address: 10 000 to start with, plus one request per USDC of traded
+volume, and when it is gone the venue throttles to one request every 10 s. A quoter that amends
+once a second spends about 3 600 requests an hour, so the budget matters for anything long-running.
+In the eight-hour soak it stayed just ahead of exhaustion — 19 453 of 19 724 used at the end —
+because every dollar traded raised the cap, and the client warned once when the margin got thin:
+
+```text
+exchange: request budget nearly exhausted (16202 of 18002 used) — the venue throttles to one
+request per 10 s when it runs out; traded volume or reserveRequestWeight raises the cap
+```
+
+`ExchangeClient::rateLimitStatus()` reports the budget as the client sees it, refreshed from the
+venue every `rateLimitRefreshMs`. If your quoting is faster than your turnover, either widen
+`requoteBps` so fewer amendments are needed, or raise the cap with `reserveRequestWeight`.
+
 ## 9. Running as a service (systemd)
 
 ```ini

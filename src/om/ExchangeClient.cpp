@@ -274,6 +274,21 @@ void ExchangeClient::adoptOpenOrders() {
 // Track every order the venue reports open that this client does not know about. Used at start-up
 // (orders left by a previous process or placed in the UI) and after a reconnect, where an order
 // whose acknowledgement was lost with the socket would otherwise rest unmanaged.
+// Seed what the venue says is already filled so that fills arriving later add to it rather than
+// replace it (`recomputeFills` takes the larger of the fill sum and the acknowledged size). A
+// resting limit order is filled at its own price, so the limit price is the right notional to
+// assume for the part that happened before this client saw the order.
+void ExchangeClient::seedFilled(Tracked& t, const OpenOrder& open) {
+    const Decimal filled = open.origSz - open.sz;
+    if (filled.isZero() || filled.raw() < 0) {
+        return;
+    }
+    t.fillSum = filled;
+    t.fillNotional = static_cast<Int128>(open.limitPx.raw()) * filled.raw();
+    t.ackFilledSz = filled;
+    recomputeFills(t);
+}
+
 std::size_t ExchangeClient::adoptFromListing(const std::vector<OpenOrder>& openOrders) {
     std::size_t adopted = 0;
     for (const auto& open : openOrders) {
@@ -291,7 +306,7 @@ std::size_t ExchangeClient::adoptFromListing(const std::vector<OpenOrder>& openO
                 known->order.state = OrderState::Open;
                 known->order.lastError.clear();
                 setOid(*known, open.oid);  // resets the fill accounting: this is another generation
-                known->order.filledSz = open.origSz - open.sz;
+                seedFilled(*known, open);
                 applyVenueStatus(*known, OrderUpdateStatus::Open, "open", open.limitPx, open.origSz);
                 emit(*known);
                 ++adopted;
@@ -311,7 +326,7 @@ std::size_t ExchangeClient::adoptFromListing(const std::vector<OpenOrder>& openO
         o.side = open.side;
         o.px = open.limitPx;
         o.origSz = open.origSz;
-        o.filledSz = open.origSz - open.sz;
+        seedFilled(t, open);
         o.reduceOnly = open.reduceOnly;
         o.isTrigger = open.isTrigger;
         if (open.isTrigger) {
@@ -1300,9 +1315,9 @@ void ExchangeClient::onUserFills(const UserFillsMsg& msg) {
         if (t == nullptr) {
             continue;
         }
-        Order& order = t->order;
-        if (f.oid != 0 && order.oid != 0 && f.oid != order.oid) {
-            if (f.oid < order.oid) {
+        Order& o = t->order;
+        if (f.oid != 0 && o.oid != 0 && f.oid != o.oid) {
+            if (f.oid < o.oid) {
                 // A fill of a generation this order has left behind. It moved the position above,
                 // where fills are absolute statements about it, but it is not part of what rests
                 // now: the amendment replaced that order.
@@ -1313,7 +1328,6 @@ void ExchangeClient::onUserFills(const UserFillsMsg& msg) {
         t->fillSum += f.sz;
         t->fillNotional += static_cast<Int128>(f.px.raw()) * f.sz.raw();
         recomputeFills(*t);
-        Order& o = t->order;
         if (!isTerminal(o.state)) {
             o.state = o.filledSz >= o.origSz ? OrderState::Filled : OrderState::PartiallyFilled;
         }

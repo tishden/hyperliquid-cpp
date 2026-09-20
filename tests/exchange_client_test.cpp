@@ -908,6 +908,25 @@ TEST_F(ExchangeClientTest, AnOrderBuriedInTheTableIsRevivedByTheOpenOrdersListin
     EXPECT_EQ(client->liveOrders("BTC").size(), 1U);
 }
 
+// An adopted order arrives with part of it already filled. Fills that happen afterwards must add to
+// that, not replace it: the client merges its own fill sum with what the venue reported, so seeding
+// only one of the two would make the next fill look like the whole story.
+TEST_F(ExchangeClientTest, FillsOnAnAdoptedOrderAddToWhatTheVenueReportedAsFilled) {
+    fake.openOrdersResponse =
+        R"([{"coin":"ETH","side":"A","limitPx":"3000.0","sz":"0.4","oid":4242,"timestamp":1700000000000,)"
+        R"("origSz":"1.0","reduceOnly":false,"orderType":"Limit","tif":"Gtc","isTrigger":false,"triggerPx":"0.0"}])";
+    auto client = startReady();
+    ASSERT_TRUE(runUntil(loop, [&] { return !client->liveOrders("ETH").empty(); }));
+    const hl::Order* o = client->liveOrders("ETH").front();
+    ASSERT_EQ(o->filledSz, d("0.6"));
+    const auto cloid = o->cloid;
+
+    fake.pushFill(FakeHyperliquid::fillJson("ETH", "A", "0.1", "3000", "0", 21, 4242, ""));
+    ASSERT_TRUE(runUntil(loop, [&] { return client->findOrder(cloid)->filledSz == d("0.7"); }))
+        << "filled is " << client->findOrder(cloid)->filledSz.toString();
+    EXPECT_EQ(client->findOrder(cloid)->remainingSz(), d("0.3"));
+}
+
 // A reconnect is the moment an order can slip out of the table: the acknowledgement that would
 // have named its oid went down with the socket. Whatever the venue still reports open and the
 // client cannot account for must be adopted, not left resting unmanaged.

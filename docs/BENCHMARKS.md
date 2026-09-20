@@ -1,7 +1,7 @@
 # Benchmarks
 
 - [Environment](#environment)
-- [Order entry: from 15.9 µs to 1.17 µs](#order-entry-from-159-µs-to-117-µs)
+- [Order entry](#order-entry)
 - [Market data](#market-data)
   - [How fast the venue actually feeds you](#how-fast-the-venue-actually-feeds-you)
   - [What the order path costs end to end, live](#what-the-order-path-costs-end-to-end-live)
@@ -29,73 +29,49 @@ With the core isolated, the coefficient of variation across repetitions is below
 except the two ~10–30 ns WebSocket codec rows (≤ 5.5 %). Frames are real mainnet captures from
 `tests/fixtures/`.
 
-## Order entry: from 15.9 µs to 1.17 µs
+## Order entry
 
 "Order entry" = build the action for one order, hash it, sign it, and assemble the complete WebSocket `post`
 frame (`RequestBuilder::wsPostAction`) — everything the client does before the bytes are handed to the socket.
 
-### Stage breakdown
+Out of the box, with nothing configured:
 
-Both columns were measured on the stand above, back to back; v1.0.0 is the first release, before the
-latency work.
-
-| Stage | Benchmark | v1.0.0 | v1.4.0 |
-|---|---|---|---|
-| MessagePack + JSON encoding | `Action_BuildOrder` | 218 ns | **186 ns** |
-| Action hash — 1 Keccak-f permutation | `Stage2_ActionHash` | — | 255 ns |
-| EIP-712 digest — 2 permutations | `Stage3_AgentDigest` | — | 514 ns |
-| Action hash + EIP-712 digest together | `Action_Hash_EIP712` | 774 ns | 764 ns |
-| ECDSA, RFC 6979 (libsecp256k1) | `Sign_EcdsaSecp256k1` | 14 646 ns | 14 665 ns |
-| ECDSA, **precomputed nonce** | `Sign_PrecomputedNonce` | — | **44 ns** |
-| payload + frame assembly | (in end-to-end) | 2 allocations + copy | 1 allocation |
-| WebSocket frame masking, 620 B | `WsEncode_OrderPost` | 147 ns | **28 ns** |
-
-### End to end
-
-| Benchmark | Signing | v1.0.0 | v1.4.0 |
-|---|---|---|---|
-| `Order_EndToEnd_SignedPayload` | RFC 6979 (default) | 15 867 ns | 15 920 ns |
-| `Order_EndToEnd_Precomputed` | precomputed nonce | — | **1 169 ns** |
-| `Cancel_EndToEnd_SignedPayload` | RFC 6979 | 15 720 ns | 15 756 ns |
-| `Cancel_EndToEnd_Precomputed` | precomputed nonce | — | **1 059 ns** |
-
-**13.6× faster order entry** with `ExchangeConfig::precomputedNonces > 0`.
-
-The same build with `-DHL_NATIVE=ON` (`-march=native`) on this CPU:
-
-| Benchmark | portable | `-march=native` |
-|---|---|---|
-| `Keccak256_64B` | 243 ns | 215 ns |
-| `Order_EndToEnd_Precomputed` | 1 169 ns | **1 047 ns** |
-| `Cancel_EndToEnd_Precomputed` | 1 059 ns | 933 ns |
-
-And inside the Docker runtime image (Ubuntu 24.04, GCC 13 build, `--cpuset-cpus=5`, same stand):
-
-| Benchmark | Docker |
+| Benchmark | Time |
 |---|---|
-| `Keccak256_64B` | 290 ns |
-| `Order_EndToEnd_SignedPayload` | 16 049 ns |
-| `Order_EndToEnd_Precomputed` | **1 278 ns** (`deterministic_fallbacks=0`) |
+| `Order_EndToEnd_SignedPayload` | 15.9 µs |
+| `Cancel_EndToEnd_SignedPayload` | 15.7 µs |
 
-### What was done
+Almost all of that is one ECDSA signature. Setting `ExchangeConfig::precomputedNonces` moves the
+scalar multiplication off the hot path (how it works: [API.md §6.1](API.md#precomputed-nonce-signing)):
 
-1. **Precomputed-nonce ECDSA (−14.6 µs).** An ECDSA signature is `R = k·G, r = R.x, s = k⁻¹(z + r·d) mod n`.
-   The fixed-base scalar multiplication `k·G` is almost all of the cost and does not depend on the message. A
-   background thread now prepares `(r, k⁻¹, r·d)` for fresh secret nonces; signing is one modular addition, one
-   modular multiplication and low-s normalisation. This required constant-time 256-bit arithmetic modulo the
-   curve order (`src/crypto/Scalar.h`: 4×64-bit limbs, 3-stage folding reduction with 2²⁵⁶ ≡ 2²⁵⁶ − n,
-   masked final subtraction), cross-checked against OpenSSL BIGNUM on 20 000 random and edge-case inputs.
-   Signatures are verified by libsecp256k1 in tests and accepted by the live testnet and mainnet.
-   Safety design (nonce uniqueness, hedged nonce generation, `fork()` protection): [API.md §6.1](API.md#precomputed-nonce-signing).
-2. **Unrolled Keccak-f[1600].** θ, ρ∘π and χ written out lane by lane, generated from the reference
-   rotation/permutation tables. On this stand it makes no measurable difference (`Keccak256_64B` 246 → 243 ns):
-   Clang 21 on Zen 5 already runs the loop form as fast. GCC 13 is ~20 % slower on it (290 ns, Docker row
-   above), and `-march=native` gains another 12 %.
-3. **Word-wise WebSocket masking (−0.12 µs).** XOR 8 bytes at a time instead of per byte: 147 → 28 ns.
-4. **Allocation-free decimal formatting and single-allocation frame building (−30 ns).**
-   `Decimal::toChars` writes into a stack buffer; `wsPostAction` signs straight into the final frame string.
+| Benchmark | Time |
+|---|---|
+| `Order_EndToEnd_Precomputed` | **1.17 µs** |
+| `Cancel_EndToEnd_Precomputed` | 1.06 µs |
 
-### Where the remaining 1.17 µs go
+### Where the time goes
+
+| Stage | Benchmark | Time |
+|---|---|---|
+| MessagePack + JSON encoding | `Action_BuildOrder` | 186 ns |
+| Action hash — 1 Keccak-f permutation | `Stage2_ActionHash` | 255 ns |
+| EIP-712 digest — 2 permutations | `Stage3_AgentDigest` | 514 ns |
+| ECDSA, RFC 6979 (libsecp256k1) | `Sign_EcdsaSecp256k1` | 14.7 µs |
+| ECDSA, precomputed nonce | `Sign_PrecomputedNonce` | 44 ns |
+| payload + frame assembly, masking | `Stage4_Payload_NoSign`, `WsEncode_OrderPost` | 27 ns + 28 ns |
+
+Two build settings and one deployment note, measured on the same stand:
+
+| | `Keccak256_64B` | `Order_EndToEnd_Precomputed` |
+|---|---|---|
+| Clang 21, portable build | 243 ns | 1 169 ns |
+| Clang 21, `-DHL_NATIVE=ON` (`-march=native`) | 215 ns | **1 047 ns** |
+| GCC 13, inside the Docker runtime image | 290 ns | 1 278 ns |
+
+Keccak is the one place where the compiler matters: Clang is about 20 % ahead of GCC on it, and
+`-march=native` on the deployment host is worth another 10 % overall.
+
+### What the 1.17 µs is spent on
 
 ```
 Keccak (3 permutations)  ██████████████████████████████████████████████████  0.77 µs  66 %
@@ -105,9 +81,8 @@ ECDSA online step        ███                                              
 masking                  █                                                   0.03 µs   2 %
 ```
 
-Keccak is at the limit of this scalar implementation; the three permutations are sequential (each
-input depends on the previous digest), so they cannot be parallelised. Build with `HL_NATIVE=ON` on the
-deployment host for the last ~10 %.
+Keccak dominates, and the three permutations are sequential — each one hashes the previous digest —
+so they cannot be overlapped. `HL_NATIVE=ON` on the deployment host is worth the last ~10 %.
 
 ### Nonce production
 
@@ -176,9 +151,10 @@ total:
 | `scheduleCancel` / `updateLeverage` → venue response | 28 | 715 ms | 597 | 954 |
 
 Roughly 0.0002 % of the time an order takes is spent in this library; the rest is Hyperliquid producing
-a block and the network getting there. That is the honest reason the optimisation work stopped where it
-did: shaving the remaining nanoseconds would change nothing you can measure at the venue. The full run
-is in [RUNNING.md §4](RUNNING.md#4-acceptance-run-against-a-live-venue).
+a block and the network getting there. Shaving the remaining nanoseconds would change nothing you can
+measure at the venue — what the microseconds buy is a path with no allocations, no locks and no
+surprises inside your own hot loop. The full run is in
+[RUNNING.md §4](RUNNING.md#4-acceptance-run-against-a-live-venue).
 
 The round trips above are from Tokyo, 2.4 ms of network away from the venue's edge; from a host
 farther away, add that extra network time twice. What is left is block production, and no client

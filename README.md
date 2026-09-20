@@ -1,7 +1,7 @@
 # hyperliquid-cpp
 
-**A production-grade C++20 connector for [Hyperliquid](https://hyperliquid.xyz): market data, order books,
-order management and EIP-712 signing — in one dependency-light static library.**
+**A C++20 trading client for [Hyperliquid](https://hyperliquid.xyz): market data, order books, order
+management and EIP-712 signing in one static library with three private dependencies.**
 
 ```
  public WS ──► MarketDataClient ──► OrderBook (l2Book + bbo overlay) ──► your strategy
@@ -19,7 +19,7 @@ order management and EIP-712 signing — in one dependency-light static library.
 | **Account & risk** | liquidations and venue-initiated cancels (`userEvents`) · funding payments · request-budget tracking with 429 / `Retry-After` handling · account state, open orders, order status, fills by time, historical orders, funding history, predicted fundings, candles, spot balances, rate limits |
 | **Signing** | byte-identical to the official Python SDK (golden-vector tested) · optional precomputed-nonce ECDSA: 44 ns per signature · agent (API) wallets · vaults / sub-accounts · `expiresAfter` |
 | **Venue rules** | asset ids resolved from `meta`/`spotMeta` · exact price (5 significant figures) and size rounding |
-| **Engineering** | exact fixed-point decimals (no floating point on the wire path) · single-threaded epoll reactor, re-entrancy-safe callbacks · 190 tests incl. end-to-end against a mock venue and a 16-step live acceptance run · ASan/UBSan/TSan clean · GCC 11/15, Clang 21 · `-Werror` |
+| **Engineering** | exact fixed-point decimals (no floating point on the wire path) · single-threaded epoll reactor, re-entrancy-safe callbacks · 199 tests incl. end-to-end against a mock venue and a 16-step live acceptance run · ASan/UBSan/TSan clean · GCC 11/15, Clang 21 · `-Werror` |
 | **Not a general SDK** | a stateful trading client — order table, book, positions, reconciliation — not a thin endpoint wrapper. A free MIT SDK with wider endpoint coverage exists; the side-by-side, including where it wins, is in [docs/COMPARISON.md](docs/COMPARISON.md) |
 | **Not included, by design** | the library cannot move funds: withdrawals, transfers and staking need EIP-712 user-signed actions it does not implement, so a compromised strategy process cannot drain the account ([docs/COVERAGE.md](docs/COVERAGE.md)) |
 
@@ -35,18 +35,25 @@ environment, full table and methodology in [docs/BENCHMARKS.md](docs/BENCHMARKS.
 | Apply snapshot to `OrderBook` | 12 ns |
 | Replay of a real mainnet session | **1.16 GiB/s · 3.8 M msg/s** |
 | Exact decimal parse (vs `strtod` 27 ns) | **7.8 ns** |
-| Order → signed WebSocket frame (msgpack, Keccak, EIP-712, ECDSA) | 15.9 µs → **1.17 µs** with precomputed nonces |
+| Order → signed WebSocket frame (msgpack, Keccak, EIP-712, ECDSA) | **15.9 µs** |
+| the same with `precomputedNonces` set | **1.17 µs** |
 
-Verified: 190 tests on Clang 21 / GCC 11 / GCC 15, ASan+UBSan and ThreadSanitizer clean, plus scripted
-live acceptance runs — **16/16 steps on testnet perps** and **perps and spot on mainnet with real
-money**, covering every size precision the venue uses, over both WebSocket and HTTP: resting orders,
-amendments, cancels, batches, post-only rejection, real taker fills with fees, `expiresAfter` and a
-forced reconnect with reconciliation. See
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#verification-matrix) and a full mainnet log in
-[docs/RUNNING.md §4](docs/RUNNING.md#4-acceptance-run-against-a-live-venue).
+**How it is verified.** 199 tests on Clang 21, GCC 11 and GCC 15, clean under ASan+UBSan and
+ThreadSanitizer. A scripted acceptance run walks the whole order-management contract against the
+live venue: 16 of 16 steps on testnet over both transports, and the same run on mainnet with real
+money across eleven instruments, covering every size precision Hyperliquid uses, both product types
+and both transports.
 
-Hyperliquid's own latency floor is block time (~0.2 s), so the connector never is the bottleneck —
-it leaves the whole budget to your strategy.
+Then an **eight-hour soak** on testnet, quoting both sides and amending about once a second:
+7 594 actions, 233 fills, 43 reconnects forced by the venue, zero timeouts, and no order left
+unmanaged. That run is where the 1.4.1 fixes come from — five ways to lose track of a resting order,
+all of which need a reconnect with an action in flight to show themselves.
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#verification-matrix) has the matrix; a full mainnet log
+is in [docs/RUNNING.md §4](docs/RUNNING.md#4-acceptance-run-against-a-live-venue).
+
+The venue answers an order in about 0.8 s, so the client is four orders of magnitude away from
+being the bottleneck. What the microseconds buy is a path with no allocations and no locks in it,
+which is what you want inside your own hot loop.
 
 ## Quick start
 
@@ -56,7 +63,7 @@ simdjson are fetched and built statically).
 
 ```bash
 scripts/build.sh release           # or: cmake --preset release && cmake --build --preset release
-scripts/test.sh release            # 190 tests, ~5 s
+scripts/test.sh release            # 199 tests, ~20 s
 scripts/ci.sh                      # everything: compilers, sanitizers, doc links, secret scan
 build/release/examples/hl_book_printer BTC ETH SOL
 build/release/examples/hl_testnet_quoter --dry-run --coin ETH
@@ -65,7 +72,7 @@ build/release/examples/hl_testnet_quoter --dry-run --coin ETH
 ### Docker
 
 ```bash
-docker build -t hyperliquid-cpp .                  # compiles, runs all 190 tests, produces a ~142 MB runtime image
+docker build -t hyperliquid-cpp .                  # compiles, runs all 199 tests, produces a ~142 MB runtime image
 docker run --rm hyperliquid-cpp hl_book_printer BTC ETH
 docker run --rm hyperliquid-cpp hl_testnet_quoter --dry-run --coin ETH
 docker run --rm -e HL_PRIVATE_KEY -e HL_ACCOUNT_ADDRESS hyperliquid-cpp hl_testnet_quoter --coin ETH --duration 600
@@ -238,7 +245,6 @@ looks like: [docs/RUNNING.md §4](docs/RUNNING.md#4-acceptance-run-against-a-liv
 | [docs/COMPARISON.md](docs/COMPARISON.md) | Side-by-side with the free open-source C++ SDK: what each one is, where it is ahead and where this one is |
 | [docs/LICENSING.md](docs/LICENSING.md) | The licence in plain language: what you may and may not do, warranties, FAQ, pre-signature checklist |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
-| [docs/hyperliquid-cpp-offer-ru.pdf](docs/hyperliquid-cpp-offer-ru.pdf) | Коммерческое предложение (RU) — what is being sold, in four pages. Source: [docs/offer-ru.html](docs/offer-ru.html), rebuild with `scripts/offer-pdf.sh` |
 
 Doxygen HTML: `scripts/docs.sh`.
 
@@ -246,7 +252,7 @@ Doxygen HTML: `scripts/docs.sh`.
 
 ```cmake
 include(FetchContent)
-FetchContent_Declare(hyperliquid_cpp GIT_REPOSITORY <your-licensed-repo-url> GIT_TAG v1.4.0)
+FetchContent_Declare(hyperliquid_cpp GIT_REPOSITORY <your-licensed-repo-url> GIT_TAG v1.4.1)
 FetchContent_MakeAvailable(hyperliquid_cpp)      # or: add_subdirectory(third_party/hyperliquid-cpp)
 target_link_libraries(my_bot PRIVATE hyperliquid::hyperliquid)
 ```
@@ -266,7 +272,7 @@ tests/               unit, golden-vector and end-to-end tests; support/MockVenue
 benchmarks/          Google Benchmark suite
 examples/            book_printer/, testnet_quoter/
 docs/                reference and guides
-scripts/             build.sh, test.sh, bench.sh, docs.sh, ci.sh, check-docs.py, offer-pdf.sh
+scripts/             build.sh, test.sh, bench.sh, docs.sh, ci.sh, check-docs.py
 ```
 
 ## Licence

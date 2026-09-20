@@ -253,6 +253,7 @@ mean (max 0.009), order round trip **435 ms** (311–763), cancel **402 ms**, mo
 |---|---|
 | `hl_live_check --taker --expiry-ms 30000` (WebSocket transport, `expiresAfter` on every action) | **16/16 steps passed** — resting order, `orderStatus`/`frontendOpenOrders`, modify with oid change, cancel, batch + cancelAll, post-only rejection, local validation, IOC fill with fee and position, reduce-only close, `scheduleCancel` (venue requires $1 M volume), `updateLeverage`, forced reconnect + reconciliation, clean exit |
 | `hl_live_check --taker --transport http` | **16/16 steps passed**, 13/13 actions over `POST /exchange` |
+| **Eight-hour soak**, quoting both sides and amending ~1/s (2026-09-20) | 7 594 actions (227 placements, 7 366 amendments), 233 maker fills, $4 238 traded, 43 venue-forced reconnects, 271 reconciliations, **0 timeouts**, **0 orders left unmanaged**, flat at the end with nothing resting. Memory flat at 12.5 MB. Five order-tracking defects were found and fixed during the runs that led up to it |
 | Quoter, 70 s quoting at the touch | 4 maker fills (0.0075 ETH each, fee 0.002962 USDC = 1.5 bps), inventory skew applied, orders canceled on exit |
 | Quoter, 10 min at 8 bps from mid | 32 amendments against 2 placements, 0 rejects, 0 errors, no fills (quotes behind the touch) |
 | Fast cancels (`f: true`) | accepted by the venue on single and batch cancels |

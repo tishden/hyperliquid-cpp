@@ -65,7 +65,7 @@ bug with no test suite waiting for it. That is the work being sold, not the HTTP
 
 | | Open SDK | This library |
 |---|---|---|
-| Signing an order | not a stated goal | **1.17 µs** order → signed frame (from 15.9 µs) via precomputed-nonce ECDSA |
+| Order → signed frame | not a stated goal | 15.9 µs, or **1.17 µs** with precomputed-nonce ECDSA |
 | Event loop | Boost.Asio `io_context` | own epoll reactor, single thread, no allocations on the hot path |
 | Published numbers | none in the README | benchmark suite plus live mainnet measurements ([BENCHMARKS.md](BENCHMARKS.md)) |
 

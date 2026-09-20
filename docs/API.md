@@ -1078,7 +1078,9 @@ acknowledgement arrives (success → ignored; failure → reconcile).
   then, if the order is tracked, fill sum and notional are accumulated, `filledSz` and `avgFillPx` recomputed and a
   non-terminal order becomes `Filled` when `filledSz >= origSz`, else `PartiallyFilled`; `onOrderUpdate` follows.
 
-**Filled quantity**: `filledSz = max(sum of userFills sizes, size reported by ack / "filled" update)`.
+**Filled quantity**: `filledSz = max(sum of userFills sizes, size reported by ack / "filled" update)`,
+counted **per generation**: `modify` replaces the order on the venue, so the replacement starts at zero
+and a late fill naming a superseded oid moves the position without counting against what rests now.
 `avgFillPx` is the fill-weighted average when fills were seen, otherwise the ack's `avgPx`. This avoids double
 counting when an immediate-fill ack and the corresponding fills both arrive.
 
@@ -1110,7 +1112,7 @@ They can be canceled (by oid) and modified (the wire order omits the cloid).
 | `side` | `Side` | |
 | `px` | `Decimal` | Current limit price |
 | `origSz` | `Decimal` | Current original size |
-| `filledSz` | `Decimal` | See filled-quantity rule |
+| `filledSz` | `Decimal` | Filled size of the **current** generation — see the filled-quantity rule |
 | `avgFillPx` | `Decimal` | |
 | `tif` | `Tif` | |
 | `reduceOnly` | `bool` | |

@@ -422,6 +422,7 @@ private:
     void bootstrap();
     void adoptOpenOrders();
     std::size_t adoptFromListing(const std::vector<OpenOrder>& openOrders);
+    void seedFilled(Tracked& t, const OpenOrder& open);
     void resubscribeUser();
     void maybeReady();
     /// Give each spot market the balance of its base token; needs spotMeta and the balances both in.
