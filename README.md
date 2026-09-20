@@ -19,7 +19,7 @@ management and EIP-712 signing in one static library with three private dependen
 | **Account & risk** | liquidations and venue-initiated cancels (`userEvents`) · funding payments · request-budget tracking with 429 / `Retry-After` handling · account state, open orders, order status, fills by time, historical orders, funding history, predicted fundings, candles, spot balances, rate limits |
 | **Signing** | byte-identical to the official Python SDK (golden-vector tested) · optional precomputed-nonce ECDSA: 44 ns per signature · agent (API) wallets · vaults / sub-accounts · `expiresAfter` |
 | **Venue rules** | asset ids resolved from `meta`/`spotMeta` · exact price (5 significant figures) and size rounding |
-| **Engineering** | exact fixed-point decimals (no floating point on the wire path) · single-threaded epoll reactor, re-entrancy-safe callbacks · 199 tests incl. end-to-end against a mock venue and a 16-step live acceptance run · ASan/UBSan/TSan clean · GCC 11/15, Clang 21 · `-Werror` |
+| **Engineering** | exact fixed-point decimals (no floating point on the wire path) · single-threaded epoll reactor, re-entrancy-safe callbacks · 200 tests incl. end-to-end against a mock venue and a 16-step live acceptance run · ASan/UBSan/TSan clean · GCC 11/15, Clang 21 · `-Werror` |
 | **Not a general SDK** | a stateful trading client — order table, book, positions, reconciliation — not a thin endpoint wrapper. A free MIT SDK with wider endpoint coverage exists; the side-by-side, including where it wins, is in [docs/COMPARISON.md](docs/COMPARISON.md) |
 | **Not included, by design** | the library cannot move funds: withdrawals, transfers and staking need EIP-712 user-signed actions it does not implement, so a compromised strategy process cannot drain the account ([docs/COVERAGE.md](docs/COVERAGE.md)) |
 
@@ -38,7 +38,7 @@ environment, full table and methodology in [docs/BENCHMARKS.md](docs/BENCHMARKS.
 | Order → signed WebSocket frame (msgpack, Keccak, EIP-712, ECDSA) | **15.9 µs** |
 | the same with `precomputedNonces` set | **1.17 µs** |
 
-**How it is verified.** 199 tests on Clang 21, GCC 11 and GCC 15, clean under ASan+UBSan and
+**How it is verified.** 200 tests on Clang 21, GCC 11 and GCC 15, clean under ASan+UBSan and
 ThreadSanitizer. A scripted acceptance run walks the whole order-management contract against the
 live venue: 16 of 16 steps on testnet over both transports, and the same run on mainnet with real
 money across eleven instruments, covering every size precision Hyperliquid uses, both product types
@@ -63,7 +63,7 @@ simdjson are fetched and built statically).
 
 ```bash
 scripts/build.sh release           # or: cmake --preset release && cmake --build --preset release
-scripts/test.sh release            # 199 tests, ~20 s
+scripts/test.sh release            # 200 tests, ~20 s
 scripts/ci.sh                      # everything: compilers, sanitizers, doc links, secret scan
 build/release/examples/hl_book_printer BTC ETH SOL
 build/release/examples/hl_testnet_quoter --dry-run --coin ETH
@@ -72,7 +72,7 @@ build/release/examples/hl_testnet_quoter --dry-run --coin ETH
 ### Docker
 
 ```bash
-docker build -t hyperliquid-cpp .                  # compiles, runs all 199 tests, produces a ~142 MB runtime image
+docker build -t hyperliquid-cpp .                  # compiles, runs all 200 tests, produces a ~142 MB runtime image
 docker run --rm hyperliquid-cpp hl_book_printer BTC ETH
 docker run --rm hyperliquid-cpp hl_testnet_quoter --dry-run --coin ETH
 docker run --rm -e HL_PRIVATE_KEY -e HL_ACCOUNT_ADDRESS hyperliquid-cpp hl_testnet_quoter --coin ETH --duration 600
@@ -193,36 +193,36 @@ build/release/examples/hl_testnet_quoter --key-file secrets/testnet.env \
 Real output from that command (trimmed):
 
 ```text
-hyperliquid-cpp 1.4.0 — ETH quoter on testnet (live orders)
-[ex] ready: account 0x…, signer 0x…, ETH asset=4 szDecimals=4, position 0
-[status] ETH mid=2638.05 spread=1.14bps bid=2635.9(Open) ask=2640.2(Open) pos=0 fills=0 vol=$0 pnl≈$0 order_rt=383/383ms(mean/last) sign=0.00ms
-[status] ETH mid=2638.45 spread=0.38bps bid=2635.9(Open) ask=2640.2(Open) pos=0 fills=0 vol=$0 pnl≈$0 order_rt=383/383ms(mean/last) sign=0.00ms
-[status] ETH mid=2636.45 spread=1.14bps bid=2634.2(Open) ask=2638.5(Open) pos=0 fills=0 vol=$0 pnl≈$0 order_rt=383/383ms(mean/last) sign=0.00ms
+hyperliquid-cpp 1.4.1 — ETH quoter on testnet (live orders)
+19:37:49.508 [ex] ready: account 0x…, signer 0x…, ETH asset=4 szDecimals=4, position 0
+19:37:59.126 [status] ETH mid=2627.6 spread=1.52bps bid=2625.4(Open) ask=2629.8(Open) pos=0 fills=0 vol=$0 pnl≈$0 order_rt=753/753ms(mean/last) sign=0.01ms
+19:41:09.165 [status] ETH mid=2634.05 spread=0.38bps bid=2631.9(Open) ask=2636.3(Open) pos=0 fills=0 vol=$0 pnl≈$0 order_rt=753/753ms(mean/last) sign=0.01ms
+19:46:09.210 [status] ETH mid=2635.95 spread=1.14bps bid=2634.2(Open) ask=2638(Open) pos=0 fills=0 vol=$0 pnl≈$0 order_rt=753/753ms(mean/last) sign=0.01ms
 …
 stopping…
 [shutdown] canceling 2 live order(s)…
 
 ══ summary ══════════════════════════════════════════════
   coin            ETH
-  orders placed   2   amendments 32   rejects 0
+  orders placed   2   amendments 136   rejects 0
   fills           0 (maker 0)   volume $0
   position        0 → 0
   pnl (mark@mid)  $0
-  actions         35 sent, 0 via HTTP, 0 errors, 0 timeouts, 0 reconciles
-  signatures      35 precomputed-nonce, 0 deterministic
-  build+sign      n=35   mean   0.001 ms   min   0.001   max   0.006
-  order rt        n=2    mean 383.426 ms   min 383.425   max 383.427
-  cancel rt       n=1    mean 439.320 ms   min 439.320   max 439.320
-  modify rt       n=32   mean 439.005 ms   min 378.833   max 546.214
-  md messages     377 (parse errors 0, reconnects 0)
+  actions         139 sent, 0 via HTTP, 0 errors, 0 timeouts, 0 reconciles
+  signatures      139 precomputed-nonce, 0 deterministic
+  build+sign      n=139  mean   0.007 ms   min   0.003   max   0.036
+  order rt        n=2    mean 753.105 ms   min 753.090   max 753.121
+  cancel rt       n=1    mean 773.620 ms   min 773.620   max 773.620
+  modify rt       n=136  mean 855.011 ms   min 737.131   max 2408.963
+  md messages     747 (parse errors 0, reconnects 0)
 ═════════════════════════════════════════════════════════
 ```
 
-Two things in that output are the point of this library. **`build+sign 0.001 ms`** is everything it
-does per action — encode, keccak, EIP-712, ECDSA, frame. **`order rt 383 ms`** is the venue: block
-production plus the network. And **`amendments 32` against `orders placed 2`** is the quoting model
-working — quotes are moved with `modify` in place, keeping the order id and its queue position
-instead of cancelling and re-placing.
+Three numbers in that output are the point of this library. `build+sign 0.007 ms` is everything it
+does per action: encode, keccak, EIP-712, ECDSA, frame. `order rt 753 ms` is the venue — block
+production plus the network, and nothing a client can shorten. And `amendments 136` against
+`orders placed 2` is the quoting model working: quotes are moved with `modify` in place, which keeps
+the order id and its queue position instead of cancelling and re-placing.
 
 Credentials go in a `secrets/*.env` file (gitignored); the annotated
 [credentials.env.example](credentials.env.example) explains how to tell an agent wallet from the

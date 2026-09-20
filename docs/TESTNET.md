@@ -81,45 +81,83 @@ build/release/examples/hl_live_check --key-file secrets/testnet.env --coin ETH -
 build/release/examples/hl_live_check --key-file secrets/testnet.env --coin ETH --flatten   # cancel + close only
 ```
 
-Real output (2026-09-19, ETH on testnet, run from the benchmark stand in Tokyo, abridged):
+Real output (2026-09-20, ETH on testnet, abridged — every step and its latency line):
 
 ```
-hyperliquid-cpp 1.4.0 — live acceptance check on testnet (ETH, WebSocket transport, presign 64, expiresAfter)
+hyperliquid-cpp 1.4.1 — live acceptance check on testnet (ETH, WebSocket transport, presign 64, expiresAfter)
 ▶ connect, load metadata, subscribe user streams
+19:37:22.015 [hl][INFO] exchange: 212 assets loaded
+19:37:26.439 [hl][INFO] exchange: ready — perp collateral 995.858072 USDC, 1 open position(s)
    PASS — account 0xMASTER…, 212 assets, ETH asset=4 szDecimals=4
 ▶ market data: order book
-   PASS — bid 2637.5 / ask 2637.8, spread 1.14 bps, size to use 0.0046
+   PASS — bid 2627.9 / ask 2628, spread 0.38 bps, size to use 0.0046
 ▶ place post-only order far from mid → Open with oid
-   PASS — px 2584.8, state Open, oid 60539440773        ⏱ order 498.0 ms | build+sign 0.007 ms
+   PASS — px 2575.3, state Open, oid 60596918735
+   ⏱  order ×1 785.9 ms | build+sign ×1 0.021 ms | step 786 ms
 ▶ info: orderStatus and frontendOpenOrders see the order
-   PASS — orderStatus: status open, oid 60539440773 | frontendOpenOrders: listed: … tif Alo
+   PASS — orderStatus: status open, oid 60596918735 | frontendOpenOrders: listed: oid 60596918735 px 2575.3 sz 0.0046 tif Alo
 ▶ modify price and size in place (cloid preserved)
-   PASS — px 2558.5, sz 0.0092, oid 60539440773 → 60539440974, state Open   ⏱ modify 427.9 ms
-▶ cancel by cloid → Canceled                        PASS — state Canceled        ⏱ cancel 412.6 ms
-▶ batch of 2 orders in one action, then cancelAll   PASS — Open Open → cleared all
+   PASS — px 2549.1, sz 0.0092, oid 60596918735 → 60596920300, state Open
+   ⏱  modify ×1 778.4 ms | build+sign ×1 0.008 ms | step 778 ms
+▶ cancel by cloid → Canceled
+   PASS — state Canceled
+   ⏱  cancel ×1 748.7 ms | build+sign ×1 0.007 ms | step 749 ms
+▶ batch of 2 orders in one action, then cancelAll
+   PASS — states Open Open → cancelAll cleared all
+   ⏱  order ×1 778.1 ms, cancel ×1 801.5 ms | build+sign ×2 0.008 ms | step 1580 ms
 ▶ post-only order that crosses → rejected by the venue
-   PASS — Rejected: Post only order would have immediately matched, bbo was 2637.4@2637.8
+   PASS — Rejected: Post only order would have immediately matched, bbo was 2627.9@2628. asset=4
+   ⏱  order ×1 785.5 ms | build+sign ×1 0.007 ms | step 786 ms
 ▶ local validation rejects invalid price/size/coin before signing
-   PASS — unknown coin 'NOSUCHCOIN' | invalid price 1234.56789 for ETH (nearest valid 1234.6) | …
+   PASS — unknown coin 'NOSUCHCOIN' | invalid price 1234.56789 for ETH (nearest valid 1234.6) | price and size must be positive
 ▶ IOC order that crosses → fill, position and fees
-      · fill Buy 0.0046 @ 2637.8 (taker, fee 0.00546)
-   PASS — Filled, filled 0.0046 @ 2637.8, position 0.0046, fills 1, fee 0.00546 USDC
-▶ close the position with a reduce-only IOC         PASS — Filled, position now 0
+      · fill Buy 0.0046 @ 2628 (taker, fee 0.005439)
+   PASS — Filled, filled 0.0046 @ 2628, position 0.0091, fills 1, fee 0.005439 USDC
+   ⏱  order ×1 1068.7 ms | build+sign ×1 0.007 ms | step 1079 ms
+▶ close the position with a reduce-only IOC
+      · fill Sell 0.0091 @ 2627.8 (taker, fee 0.01076)
+   PASS — Filled, position now 0
+   ⏱  order ×1 1104.9 ms | build+sign ×1 0.007 ms | step 1107 ms
 ▶ scheduleCancel (dead-man's switch): arm and clear
-   PASS — Cannot set scheduled cancel time until enough volume traded. Required: $1000000. Traded: $241.14.
-▶ updateLeverage                                    PASS — ok
+   PASS — arm: Cannot set scheduled cancel time until enough volume traded. Required: $1000000. Traded: $9760.65. | clear: Cannot set scheduled cancel time until enough volume traded. Required: $1000000. Traded: $9760.65.
+   ⏱  other ×2 1068.1 ms | build+sign ×2 0.009 ms | step 2136 ms
+▶ updateLeverage
+   PASS — ok
+   ⏱  other ×1 1112.6 ms | build+sign ×1 0.010 ms | step 1113 ms
 ▶ reconnect: drop the private socket, reconcile a live order
+19:37:40.916 [hl][INFO] exchange: ready — perp collateral 995.858072 USDC, 0 open position(s)
    PASS — reconnected, reconciles 0 → 1, order Open
-▶ no orders left on the venue                       PASS — 0 open orders on the venue
-▶ no leftover position                              PASS — flat
+   ⏱  order ×1 870.3 ms, cancel ×1 800.9 ms | build+sign ×2 0.008 ms | step 3779 ms
+▶ no orders left on the venue
+   PASS — 0 open orders on the venue
+▶ no leftover position (a resting test order may have been filled)
+   PASS — flat
+  PASS connect, load metadata, subscribe user streams
+  PASS market data: order book
+  PASS place post-only order far from mid → Open with oid
+  PASS info: orderStatus and frontendOpenOrders see the order
+  PASS modify price and size in place (cloid preserved)
+  PASS cancel by cloid → Canceled
+  PASS batch of 2 orders in one action, then cancelAll
+  PASS post-only order that crosses → rejected by the venue
+  PASS local validation rejects invalid price/size/coin before signing
+  PASS IOC order that crosses → fill, position and fees
+  PASS close the position with a reduce-only IOC
+  PASS scheduleCancel (dead-man's switch): arm and clear
+  PASS updateLeverage
+  PASS reconnect: drop the private socket, reconcile a live order
+  PASS no orders left on the venue
+  PASS no leftover position (a resting test order may have been filled)
   ---------------------------------------------------
   actions 13 (0 via HTTP), errors 2, timeouts 0, reconciles 1
   signatures 13 precomputed-nonce / 0 deterministic
-  build+sign   n=13   mean    0.001 ms   min    0.001   max    0.007
-  order        n=6    mean  526.272 ms   min  405.773   max  765.503
-  cancel       n=3    mean  403.306 ms   min  392.408   max  412.605
-  modify       n=1    mean  427.930 ms
-  order updates 28, fills 2, md messages 11 (parse errors 0)
+  --- latency (round trip includes the network to the venue) ---
+  build+sign   n=13   mean    0.008 ms   min    0.007   max    0.021   last    0.009
+  order        n=6    mean  898.904 ms   min  778.106   max 1104.941   last  870.260
+  cancel       n=3    mean  783.732 ms   min  748.733   max  801.546   last  800.918
+  modify       n=1    mean  778.399 ms   min  778.399   max  778.399   last  778.399
+  other        n=3    mean 1082.918 ms   min 1035.300   max 1112.607   last 1112.607
+  order updates 17, fills 2, md messages 23 (parse errors 0)
   0 of 16 steps failed
 ```
 
@@ -163,30 +201,30 @@ the dead-man's switch and prints a summary.
 
 ## 6. Reading the output
 
-Real 70-second run quoting at the touch (`--half-spread-bps 0.2 --requote-bps 0.5`), 2026-09-19:
+Real 70-second run quoting at the touch (`--half-spread-bps 0.2 --requote-bps 0.5`), 2026-09-20:
 
 ```
-hyperliquid-cpp 1.4.0 — ETH quoter on testnet (live orders)
-[hl][INFO] exchange: 212 assets loaded
-[hl][INFO] exchange: ready — perp collateral 998.879735 USDC, 0 open position(s)
-[ex] ready: account 0xMASTER…, signer 0xAGENT…, ETH asset=4 szDecimals=4, position 0
-[status] ETH mid=2633.45 spread=0.38bps bid=2633.4(Open) ask=2633.5(Open) pos=0 fills=0 vol=$0 pnl≈$0 order_rt=413/413ms(mean/last) sign=0.00ms
-[fill] Buy 0.0062 ETH @ 2633.4 (maker, fee 0.002449 USDC) → position 0.0062
-[fill] Sell 0.0075 ETH @ 2633.5 (maker, fee 0.002962 USDC) → position -0.0013
-[status] ETH mid=2633.7 spread=0.76bps bid=2633.6(PartiallyFilled) ask=2633.8(Open) pos=-0.0013 fills=2 vol=$36.07833 pnl≈$-0.005051 order_rt=412/409ms(mean/last) sign=0.00ms
+hyperliquid-cpp 1.4.1 — ETH quoter on testnet (live orders)
+19:55:53.591 [ex] ready: account 0xMASTER…, signer 0xAGENT…, ETH asset=4 szDecimals=4, position 0
+19:55:58.007 [status] ETH mid=2631.35 spread=1.14bps bid=2631.2(Open) ask=2631.5(Open) pos=0 fills=0 vol=$0 pnl≈$0 order_rt=839/839ms(mean/last) sign=0.04ms
+19:56:28.964 [fill] Sell 0.0075 ETH @ 2631.5 (maker, fee 0.00296 USDC) → position -0.0075
+19:56:54.375 [fill] Buy 0.0075 ETH @ 2634.2 (maker, fee 0.002963 USDC) → position 0
+19:56:58.025 [status] ETH mid=2633.85 spread=0.38bps bid=2633.8(Open) ask=2633.9(PartiallyFilled) pos=0 fills=2 vol=$39.49275 pnl≈$-0.026173 order_rt=812/758ms(mean/last) sign=0.01ms
 …
 ══ summary ══════════════════════════════════════════════
   coin            ETH
-  orders placed   5   amendments 15   rejects 0
-  fills           4 (maker 4)   volume $75.57933
-  position        0 → -0.0013
-  pnl (mark@mid)  $-0.013455
-  actions         21 sent, 0 via HTTP, 0 errors, 0 timeouts, 0 reconciles
-  signatures      21 precomputed-nonce, 0 deterministic
-  build+sign      n=21   mean   0.001 ms   min   0.001   max   0.007
-  order rt        n=5    mean 427.904 ms   min 409.360   max 451.859
-  modify rt       n=15   mean 439.762 ms   min 367.335   max 567.301
-  md messages     46 (parse errors 0, reconnects 0)
+  orders placed   3   amendments 21   rejects 0
+  fills           2 (maker 2)   volume $39.49275
+  position        0 → 0
+  pnl (mark@mid)  $-0.026173
+  actions         25 sent, 0 via HTTP, 0 errors, 0 timeouts, 2 reconciles
+  signatures      25 precomputed-nonce, 0 deterministic
+  build+sign      n=25   mean   0.010 ms   min   0.005   max   0.070
+  order rt        n=3    mean 811.900 ms   min 758.500   max 838.630
+  cancel rt       n=1    mean 750.110 ms   min 750.110   max 750.110
+  modify rt       n=21   mean 872.359 ms   min 730.727   max 1382.327
+  md messages     62 (parse errors 0, reconnects 0)
+═════════════════════════════════════════════════════════
 ```
 
 Quoting 8 bps away from mid on the same market produced no fills in ten minutes (the spread itself is
@@ -195,8 +233,8 @@ inventory skew after the fills: short inventory moved both quotes up.
 
 
 - `bid=…(Open)` shows the resting quote and its `OrderState`.
-- Testnet fees observed in these runs: maker 0.002962 USDC on $19.75 (1.5 bps), taker 0.00546 USDC on
-  $12.13 (4.5 bps).
+- Testnet fees observed in these runs: maker 0.00296 USDC on $19.74 (1.5 bps), taker 0.005439 USDC on
+  $12.09 (4.5 bps).
 - `pnl` is cash flow from fills (fees included) plus the position change marked at mid — a quick
   sanity figure, not accounting.
 - `reconciles > 0` means an action outcome was unknown (timeout / disconnect) and was resolved via

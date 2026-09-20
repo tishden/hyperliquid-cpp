@@ -104,84 +104,87 @@ Spot pairs are named `@<index>` (`PURR/USDC` is the exception, index 0); passing
 
 ### What a real mainnet run looks like
 
-Below is an unedited run against mainnet spot HYPE/USDC on 2026-09-19 from the benchmark stand in
-Tokyo ([BENCHMARKS.md](BENCHMARKS.md#environment)), with a $28 account. Only the two addresses are
-redacted.
+Below is an unedited run against mainnet spot HYPE/USDC on 2026-09-20, from an ordinary European
+host with a $28 account — not from the Tokyo stand the benchmarks were taken on, which is why the
+round trips here are ~850 ms rather than the ~435 ms measured 2.4 ms away from the venue
+([BENCHMARKS.md](BENCHMARKS.md#what-the-order-path-costs-end-to-end-live)). Only the two addresses
+are redacted.
 
 ```text
-hyperliquid-cpp 1.4.0 — live acceptance check on MAINNET (@107, WebSocket transport, presign 64, expiresAfter)
-[hl][INFO] ws: connecting to wss://api.hyperliquid.xyz/ws
-[hl][INFO] exchange: starting (mainnet, account 0x<master>, signer 0x<agent>)
-[hl][INFO] ws: connecting to wss://api.hyperliquid.xyz/ws
+hyperliquid-cpp 1.4.1 — live acceptance check on MAINNET (@107, WebSocket transport, presign 64, expiresAfter)
+19:57:33.487 [hl][INFO] ws: connecting to wss://api.hyperliquid.xyz/ws
+19:57:34.016 [hl][INFO] exchange: starting (mainnet, account 0x<master>, signer 0x<agent>)
+19:57:34.023 [hl][INFO] ws: connecting to wss://api.hyperliquid.xyz/ws
 
 ▶ connect, load metadata, subscribe user streams
-[hl][INFO] ws: connected to wss://api.hyperliquid.xyz/ws (3 subscriptions)
-[hl][INFO] ws: connected to wss://api.hyperliquid.xyz/ws (2 subscriptions)
-[hl][INFO] exchange: 563 assets loaded
-[hl][INFO] exchange: ready — perp collateral 0 USDC, 4 open position(s), spot USDC 28.41048597
+19:57:34.875 [hl][INFO] ws: connected to wss://api.hyperliquid.xyz/ws (2 subscriptions)
+19:57:34.922 [hl][INFO] ws: connected to wss://api.hyperliquid.xyz/ws (3 subscriptions)
+19:57:37.711 [hl][INFO] exchange: 563 assets loaded
+19:57:41.740 [hl][INFO] exchange: ready — perp collateral 0 USDC, 4 open position(s), spot USDC 28.39124028
    PASS — account 0x<master>, 563 assets, @107 asset=10107 szDecimals=2
 
 ▶ market data: order book
-   PASS — bid 91.669 / ask 91.673, spread 0.44 bps, size to use 0.12
+   PASS — bid 93.103 / ask 93.109, spread 0.64 bps, size to use 0.12
 
 ▶ place post-only order far from mid → Open with oid
-   PASS — px 89.837, state Open, oid 550121871020
-   ⏱  order ×1 394.7 ms | build+sign ×1 0.007 ms | step 395 ms
+   PASS — px 91.243, state Open, oid 550834093324
+   ⏱  order ×1 720.7 ms | build+sign ×1 0.013 ms | step 721 ms
 
 ▶ info: orderStatus and frontendOpenOrders see the order
-   PASS — orderStatus: status open, oid 550121871020 | frontendOpenOrders: listed: oid 550121871020 px 89.837 sz 0.12 tif Alo
+   PASS — orderStatus: status open, oid 550834093324 | frontendOpenOrders: listed: oid 550834093324 px 91.243 sz 0.12 tif Alo
 
 ▶ modify price and size in place (cloid preserved)
-   PASS — px 88.919, sz 0.24, oid 550121871020 → 550121876162, state Open
-   ⏱  modify ×1 382.0 ms | build+sign ×1 0.001 ms | step 382 ms
+   PASS — px 90.311, sz 0.24, oid 550834093324 → 550834110431, state Open
+   ⏱  modify ×1 793.9 ms | build+sign ×1 0.011 ms | step 794 ms
 
 ▶ cancel by cloid → Canceled
    PASS — state Canceled
-   ⏱  cancel ×1 409.9 ms | build+sign ×1 0.001 ms | step 410 ms
+   ⏱  cancel ×1 824.7 ms | build+sign ×1 0.008 ms | step 825 ms
 
 ▶ batch of 2 orders in one action, then cancelAll
    PASS — states Open Open → cancelAll cleared all
-   ⏱  order ×1 412.8 ms, cancel ×1 385.1 ms | build+sign ×2 0.001 ms | step 798 ms
+   ⏱  order ×1 746.2 ms, cancel ×1 711.5 ms | build+sign ×2 0.008 ms | step 1458 ms
 
 ▶ post-only order that crosses → rejected by the venue
-   PASS — Rejected: Post only order would have immediately matched, bbo was 91.672@91.673. asset=10107
-   ⏱  order ×1 429.2 ms | build+sign ×1 0.001 ms | step 429 ms
+19:57:47.061 [hl][WARN] exchange: 0xe7ac5cbc751d53d20000000000000004 rejected by the venue: Post only order would have immediately matched, bbo was 93.072@93.084. asset=10107
+   PASS — Rejected: Post only order would have immediately matched, bbo was 93.072@93.084. asset=10107
+   ⏱  order ×1 755.4 ms | build+sign ×1 0.007 ms | step 755 ms
 
 ▶ local validation rejects invalid price/size/coin before signing
    PASS — unknown coin 'NOSUCHCOIN' | invalid price 1234.56789 for @107 (nearest valid 1234.6) | price and size must be positive
 
 ▶ IOC order that crosses → fill, position and fees
-      · fill Buy 0.12 @ 91.673 (taker, fee 0.00008399)
-   PASS — Filled, filled 0.12 @ 91.673, position 0.12983201, fills 1, fee 0.00008399 HYPE
-   ⏱  order ×1 763.3 ms | build+sign ×1 0.001 ms | step 809 ms
+      · fill Buy 0.12 @ 93.082 (taker, fee 0.00008399)
+   PASS — Filled, filled 0.12 @ 93.082, position 0.12974802, fills 1, fee 0.00008399 HYPE
+   ⏱  order ×1 996.2 ms | build+sign ×1 0.007 ms | step 1022 ms
 
 ▶ sell the acquired spot balance back with an IOC
-      · fill Sell 0.12 @ 91.663 (taker, fee 0.00769969)
-   PASS — Filled, position now 0.00974802 (below one lot — unsellable dust, the spot buy fee was charged in the base token)
-   ⏱  order ×1 612.0 ms | build+sign ×1 0.001 ms | step 854 ms
+      · fill Sell 0.12 @ 93.076 (taker, fee 0.00781838)
+   PASS — Filled, position now 0.00966403 (below one lot — unsellable dust, the spot buy fee was charged in the base token)
+   ⏱  order ×1 1053.6 ms | build+sign ×1 0.007 ms | step 1080 ms
 
 ▶ scheduleCancel (dead-man's switch): arm and clear
-[hl][WARN] exchange: action failed (Venue): Cannot set scheduled cancel time until enough volume traded. Required: $1000000. Traded: $687.73.
-[hl][WARN] exchange: action failed (Venue): Cannot set scheduled cancel time until enough volume traded. Required: $1000000. Traded: $687.73.
-   PASS — arm: Cannot set scheduled cancel time until enough volume traded. Required: $1000000. Traded: $687.73. | clear: Cannot set scheduled cancel time until enough volume traded. Required: $1000000. Traded: $687.73.
-   ⏱  other ×2 749.8 ms | build+sign ×2 0.001 ms | step 1500 ms
+19:57:50.248 [hl][WARN] exchange: action failed (Venue): Cannot set scheduled cancel time until enough volume traded. Required: $1000000. Traded: $732.73.
+19:57:51.308 [hl][WARN] exchange: action failed (Venue): Cannot set scheduled cancel time until enough volume traded. Required: $1000000. Traded: $732.73.
+   PASS — arm: Cannot set scheduled cancel time until enough volume traded. Required: $1000000. Traded: $732.73. | clear: Cannot set scheduled cancel time until enough volume traded. Required: $1000000. Traded: $732.73.
+   ⏱  other ×2 1071.8 ms | build+sign ×2 0.007 ms | step 2144 ms
 
 ▶ updateLeverage
    SKIP — leverage is a perp-only action; @107 is a spot pair
 
 ▶ reconnect: drop the private socket, reconcile a live order
-[hl][WARN] ws: wss://api.hyperliquid.xyz/ws closed: live-check forced reconnect
-[hl][INFO] ws: connecting to wss://api.hyperliquid.xyz/ws
-[hl][INFO] ws: connected to wss://api.hyperliquid.xyz/ws (3 subscriptions)
-[hl][INFO] exchange: ready — perp collateral 0 USDC, 4 open position(s), spot USDC 28.41048597
+19:57:52.120 [hl][WARN] ws: wss://api.hyperliquid.xyz/ws closed: live-check forced reconnect
+19:57:52.371 [hl][INFO] ws: connecting to wss://api.hyperliquid.xyz/ws
+19:57:53.224 [hl][INFO] ws: connected to wss://api.hyperliquid.xyz/ws (3 subscriptions)
+19:57:53.592 [hl][INFO] exchange: ready — perp collateral 0 USDC, 4 open position(s), spot USDC 28.39124028
    PASS — reconnected, reconciles 0 → 1, order Open
-   ⏱  order ×1 344.6 ms, cancel ×1 373.4 ms | build+sign ×2 0.002 ms | step 1024 ms
+   ⏱  order ×1 812.6 ms, cancel ×1 772.1 ms | build+sign ×2 0.007 ms | step 3057 ms
 
 ▶ no orders left on the venue
    PASS — 0 open orders on the venue
 
 ▶ no leftover position (a resting test order may have been filled)
-   PASS — only 0.00974802 left — below one lot, cannot be sold
+   PASS — only 0.00966403 left — below one lot, cannot be sold
 
 ══ live check summary ═══════════════════════════════════
   … 15 steps, all PASS …
@@ -189,23 +192,22 @@ hyperliquid-cpp 1.4.0 — live acceptance check on MAINNET (@107, WebSocket tran
   actions 12 (0 via HTTP), errors 2, timeouts 0, reconciles 1
   signatures 12 precomputed-nonce / 0 deterministic
   --- latency (round trip includes the network to the venue) ---
-  build+sign   n=12   mean    0.001 ms   min    0.001   max    0.007   last    0.002
-  order        n=6    mean  492.763 ms   min  344.616   max  763.340   last  344.616
-  cancel       n=3    mean  389.446 ms   min  373.372   max  409.857   last  373.372
-  modify       n=1    mean  382.010 ms   min  382.010   max  382.010   last  382.010
-  other        n=2    mean  749.837 ms   min  737.670   max  762.005   last  737.670
-  order updates 28, fills 2, md messages 35 (parse errors 0)
+  build+sign   n=12   mean    0.008 ms   min    0.007   max    0.013   last    0.007
+  order        n=6    mean  847.445 ms   min  720.695   max 1053.590   last  812.632
+  cancel       n=3    mean  769.407 ms   min  711.454   max  824.711   last  772.057
+  modify       n=1    mean  793.932 ms   min  793.932   max  793.932   last  793.932
+  other        n=2    mean 1071.837 ms   min 1059.349   max 1084.325   last 1059.349
+  order updates 17, fills 2, md messages 144 (parse errors 0)
   0 of 15 steps failed
 ═════════════════════════════════════════════════════════
 ```
 
 **Read the latency block, not the marketing.** `build+sign` is everything this library does for an
-action — encode, keccak, EIP-712, ECDSA, frame — and it is **1 µs** (7 µs for the first one, which
-warms the caches). The round trip is **345–763 ms**, because that is the venue: block production plus
-the network, of which only 2.4 ms is the network from this host. The library is five orders of
-magnitude away from being the bottleneck, which is exactly why the signing work went into the
-precomputed-nonce path and no further. Budget your own strategy against ~0.4 s to know an order
-rested, not against µs.
+action: encode, keccak, EIP-712, ECDSA, frame. Here it is **8 µs**, and 1 µs on the benchmark stand —
+the difference is the CPU, not the code. The round trip is **720–1050 ms**, and that is the venue:
+block production plus the network. The library is five orders of magnitude away from being the
+bottleneck. Budget your strategy against most of a second to know an order rested, not against
+microseconds.
 
 Three venue behaviours the run makes concrete, all of them surprises for someone arriving from a CEX:
 
