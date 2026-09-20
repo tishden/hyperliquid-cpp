@@ -202,7 +202,7 @@ hyperliquid-cpp 1.4.1 — live acceptance check on MAINNET (@107, WebSocket tran
 ═════════════════════════════════════════════════════════
 ```
 
-**Read the latency block, not the marketing.** `build+sign` is everything this library does for an
+**Read the latency block.** `build+sign` is everything this library does for an
 action: encode, keccak, EIP-712, ECDSA, frame. Here it is **8 µs**, and 1 µs on the benchmark stand —
 the difference is the CPU, not the code. The round trip is **720–1050 ms**, and that is the venue:
 block production plus the network. The library is five orders of magnitude away from being the

@@ -17,7 +17,7 @@ management and EIP-712 signing in one static library with three private dependen
 | **Order book** | allocation-free, 64 levels/side · snapshot + best-bid/offer overlay · mid, microprice, spread, depth, VWAP |
 | **Order management** | place / batch / cancel / cancel-all / modify (incl. stops) / scheduleCancel / updateLeverage / updateIsolatedMargin · TP-SL grouping, builder codes, `expiresAfter`, fast cancels, order-priority fees · WebSocket `post` **or** HTTP · unified order state from acks + `orderUpdates` + `userFills` · positions (perp **and** spot) · automatic reconciliation · adopts orders left by a previous process · agent-wallet/master detection |
 | **Account & risk** | liquidations and venue-initiated cancels (`userEvents`) · funding payments · request-budget tracking with 429 / `Retry-After` handling · account state, open orders, order status, fills by time, historical orders, funding history, predicted fundings, candles, spot balances, rate limits |
-| **Signing** | byte-identical to the official Python SDK (golden-vector tested) · optional precomputed-nonce ECDSA: 44 ns per signature · agent (API) wallets · vaults / sub-accounts · `expiresAfter` |
+| **Signing** | byte-identical to the official Python SDK (golden-vector tested) · agent (API) wallets · vaults / sub-accounts · `expiresAfter` · optional precomputed-nonce ECDSA when a signature per 15 µs is too slow |
 | **Venue rules** | asset ids resolved from `meta`/`spotMeta` · exact price (5 significant figures) and size rounding |
 | **Engineering** | exact fixed-point decimals (no floating point on the wire path) · single-threaded epoll reactor, re-entrancy-safe callbacks · 200 tests incl. end-to-end against a mock venue and a 16-step live acceptance run · ASan/UBSan/TSan clean · GCC 11/15, Clang 21 · `-Werror` |
 | **Not a general SDK** | a stateful trading client — order table, book, positions, reconciliation — not a thin endpoint wrapper. A free MIT SDK with wider endpoint coverage exists; the side-by-side, including where it wins, is in [docs/COMPARISON.md](docs/COMPARISON.md) |
@@ -33,10 +33,9 @@ environment, full table and methodology in [docs/BENCHMARKS.md](docs/BENCHMARKS.
 | Parse `bbo` frame → `BboMsg` | **169 ns** |
 | Parse `l2Book` (20×20 levels, 1.6 KB) | 2.5 µs |
 | Apply snapshot to `OrderBook` | 12 ns |
-| Replay of a real mainnet session | **1.16 GiB/s · 3.8 M msg/s** |
-| Exact decimal parse (vs `strtod` 27 ns) | **7.8 ns** |
-| Order → signed WebSocket frame (msgpack, Keccak, EIP-712, ECDSA) | **15.9 µs** |
-| the same with `precomputedNonces` set | **1.17 µs** |
+| Replay of a real mainnet session | 1.16 GiB/s · 3.8 M msg/s |
+| Exact decimal parse (`strtod` on the same input: 27 ns) | **7.8 ns** |
+| Order → signed WebSocket frame (msgpack, Keccak, EIP-712, ECDSA) | **15.9 µs**, or **1.17 µs** with precomputed nonces |
 
 **How it is verified.** 200 tests on Clang 21, GCC 11 and GCC 15, clean under ASan+UBSan and
 ThreadSanitizer. A scripted acceptance run walks the whole order-management contract against the
@@ -218,8 +217,8 @@ stopping…
 ═════════════════════════════════════════════════════════
 ```
 
-Three numbers in that output are the point of this library. `build+sign 0.007 ms` is everything it
-does per action: encode, keccak, EIP-712, ECDSA, frame. `order rt 753 ms` is the venue — block
+Three numbers in that output matter. `build+sign 0.007 ms` is everything the library does per
+action: encode, keccak, EIP-712, ECDSA, frame. `order rt 753 ms` is the venue — block
 production plus the network, and nothing a client can shorten. And `amendments 136` against
 `orders placed 2` is the quoting model working: quotes are moved with `modify` in place, which keeps
 the order id and its queue position instead of cancelling and re-placing.

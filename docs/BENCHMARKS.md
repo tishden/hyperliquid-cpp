@@ -150,10 +150,10 @@ total:
 | modify → venue response | 11 | 414 ms | 310 | 591 |
 | `scheduleCancel` / `updateLeverage` → venue response | 28 | 715 ms | 597 | 954 |
 
-Roughly 0.0002 % of the time an order takes is spent in this library; the rest is Hyperliquid producing
-a block and the network getting there. Shaving the remaining nanoseconds would change nothing you can
-measure at the venue — what the microseconds buy is a path with no allocations, no locks and no
-surprises inside your own hot loop. The full run is in
+Roughly 0.0002 % of the time an order takes is spent in this library; the rest is Hyperliquid
+producing a block and the network getting there. Shaving the remaining nanoseconds would change
+nothing measurable at the venue. The microseconds buy a path with no allocations and no locks in it,
+which is what matters inside your own hot loop. The full run is in
 [RUNNING.md §4](RUNNING.md#4-acceptance-run-against-a-live-venue).
 
 The round trips above are from Tokyo, 2.4 ms of network away from the venue's edge; from a host

@@ -73,9 +73,9 @@ The open SDK's README makes no latency claim and points to a separate project of
 low-latency order routing. Here the signing path was profiled, rewritten and re-measured, and the
 result is reproducible from the repository.
 
-The honest bound, stated the same way in our own docs: the venue's round trip is ~435 ms, so the
-client is never the bottleneck. What the engineering buys is a predictable, allocation-free,
-single-threaded path you can reason about inside your own hot loop — not trading profit.
+The bound is the same for both: the venue's round trip is ~435 ms, so neither client is the
+bottleneck. The engineering buys a predictable, allocation-free, single-threaded path you can reason
+about inside your own hot loop. It does not buy trading profit.
 
 ### It integrates into your process instead of bringing its own
 
