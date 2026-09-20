@@ -1039,6 +1039,11 @@ void ExchangeClient::applyActionResult(const PendingAction& pending, const Resul
             continue;
         }
         const ActionStatus& st = statuses[i];
+        if (st.kind == ActionStatus::Kind::Error) {
+            // Logged here rather than left in `lastError` alone: a venue rejection is the thing an
+            // operator needs to see in the log when an order stops doing what the strategy expects.
+            logf(LogLevel::Warn, "exchange: %s rejected by the venue: %s", cloid.toString().c_str(), st.error.c_str());
+        }
         switch (pending.kind) {
             case ActionKind::Order:
                 applyAck(*t, st);
@@ -1058,7 +1063,11 @@ void ExchangeClient::applyActionResult(const PendingAction& pending, const Resul
                 o.modifyPending = false;
                 if (st.kind == ActionStatus::Kind::Error) {
                     o.lastError = st.error;
-                    reconcile(cloid);
+                    // An error here does not prove the amendment was not applied — the venue can
+                    // answer one while the replacement rests — so settle it against the listing,
+                    // which names the oid the cloid currently carries. When the cloid is not
+                    // resting, that path falls back to the oid probe and the rejection stands.
+                    reconcileAmended(cloid);
                 } else {
                     if (i < pending.modifyTargets.size()) {
                         o.px = pending.modifyTargets[i].first;

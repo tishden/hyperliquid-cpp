@@ -25,6 +25,15 @@ All notable changes to this project are documented here. The project follows
   names the first one — so an unresolved modify is now reconciled against `frontendOpenOrders`,
   where the live generation of a cloid can actually be identified; the oid probe remains the
   fallback for a cloid that is not resting at all.
+- **A venue error on an amendment was believed too literally.** The venue can answer a
+  `batchModify` with an error for an amendment it has nonetheless applied — the old oid canceled,
+  the replacement resting under the same cloid. That answer sent reconciliation to the oid the
+  client knew, which reported "canceled", and the resting replacement was lost. Errors on an
+  amendment are now settled against the open-orders listing like any other unresolved modify; when
+  the cloid is not resting the rejection stands as before.
+- Venue-side rejections carried inside an acknowledgement are now **logged** (`exchange: <cloid>
+  rejected by the venue: …`). They were only stored in `Order::lastError`, so an order could change
+  its fate with nothing in the log to explain why — which is precisely how the failure above hid.
 - **A fresh order could be written off as rejected while the venue was still accepting it.** When
   the acknowledgement of a *placement* goes down with the socket the order has no oid, so it can
   only be asked about by cloid — and the venue answers "unknown" until it has processed the action,

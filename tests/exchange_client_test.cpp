@@ -758,6 +758,39 @@ TEST_F(ExchangeClientTest, OneRejectionIsReportedOnce) {
     EXPECT_EQ(rejected, 1) << "one rejection, one callback";
 }
 
+// The venue can answer a `batchModify` with an error for an amendment it has nonetheless applied:
+// the old oid is canceled and the replacement rests under the same cloid. Probing the oid the
+// client knows then reports "canceled" and the resting replacement is lost — the same leak as an
+// unacknowledged modify, reached through the acknowledgement instead of a dead socket.
+TEST_F(ExchangeClientTest, ModifyErrorIsSettledAgainstTheListingNotTheOldOid) {
+    auto client = startReady();
+    const auto cloid = client->placeOrder(btcBuy()).value();
+    ASSERT_TRUE(runUntil(loop, [&] { return client->findOrder(cloid)->state == OrderState::Open; }));
+    const std::uint64_t oldOid = client->findOrder(cloid)->oid;
+    const std::uint64_t restingOid = oldOid + 5;
+
+    fake.orderStatusByKey[std::to_string(oldOid)] =
+        R"({"status":"order","order":{"order":{"coin":"BTC","side":"B","limitPx":"50000.0","sz":"0.002","oid":)" +
+        std::to_string(oldOid) + R"(,"timestamp":1,"origSz":"0.002","cloid":")" + cloid.toString() +
+        R"("},"status":"canceled","statusTimestamp":2}})";
+    fake.openOrdersResponse =
+        R"([{"coin":"BTC","side":"B","limitPx":"49000.0","sz":"0.002","oid":)" + std::to_string(restingOid) +
+        R"(,"timestamp":1700000000000,"origSz":"0.002","cloid":")" + cloid.toString() +
+        R"(","reduceOnly":false,"orderType":"Limit","tif":"Alo","isTrigger":false,"triggerPx":"0.0"}])";
+    fake.actionPayload = [](const std::string& type, const std::string&) -> std::string {
+        if (type == "batchModify") {
+            return R"({"status":"ok","response":{"type":"batchModify","data":{"statuses":[{"error":"Order was never placed, already canceled, or filled."}]}}})";
+        }
+        return {};
+    };
+
+    ASSERT_FALSE(client->modify(cloid, d("49000"), d("0.002")));
+    ASSERT_TRUE(runUntil(loop, [&] { return client->findOrder(cloid)->oid == restingOid; }))
+        << "state is " << hl::toString(client->findOrder(cloid)->state);
+    EXPECT_TRUE(client->findOrder(cloid)->isLive());
+    EXPECT_EQ(client->liveOrders("BTC").size(), 1U);
+}
+
 // A quoter that amends once a second outruns any bounded memory of retired oids: the venue's
 // `canceled` for the generation an amendment replaced can arrive after several further amendments.
 // Such an update must not bury the order that is actually resting — this leaked a live quote onto

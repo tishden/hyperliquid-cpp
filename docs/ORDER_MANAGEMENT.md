@@ -300,7 +300,7 @@ the order continuous:
 | update `open`/`filled`/`triggered` with a **new** oid | adopt the new oid, retire the old one |
 | update with another status for a new oid | ignored (the ack will tell) |
 | ack success `resting{oid}` | `px`, `origSz` ← targets; retire old oid if different; state as for an order ack; `lastError` cleared |
-| ack error, or transport failure, or `canceledDuringModify` without success | reconcile |
+| ack error, or transport failure, or `canceledDuringModify` without success | reconciled **against the open-orders listing** — an error does not prove the amendment was not applied |
 | update for an oid **older** than the tracked one | ignored — it describes a generation the order has left behind |
 | later update for a **retired** oid | ignored |
 
@@ -333,8 +333,8 @@ acknowledgement never arrived and which therefore has no oid yet.
 > working order terminal and leaks it: the strategy stops managing an order that is still on the
 > venue. An answer about an oid other than the tracked one is ignored for the same reason.
 >
-> **And why not always by oid either.** A modify whose acknowledgement was lost may have been
-> applied: the venue then cancels the oid the client knows and opens a new one under the same cloid.
+> **And why not always by oid either.** A modify whose acknowledgement was lost — or was answered
+> with an error, which does not prove the amendment was not applied — may have been applied: the venue then cancels the oid the client knows and opens a new one under the same cloid.
 > An oid probe answers `canceled` about that replaced generation — the same leak from the other
 > side. So an **unresolved modify** is reconciled against `frontendOpenOrders`, the only answer that
 > identifies which oid currently carries the cloid; the oid probe follows only when the cloid is not
