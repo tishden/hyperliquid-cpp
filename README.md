@@ -41,18 +41,9 @@ environment, full table and methodology in [docs/BENCHMARKS.md](docs/BENCHMARKS.
 ThreadSanitizer. A scripted acceptance run walks the whole order-management contract against the
 live venue: 16 of 16 steps on testnet over both transports, and the same run on mainnet with real
 money across eleven instruments, covering every size precision Hyperliquid uses, both product types
-and both transports.
-
-Then an **eight-hour soak** on testnet, quoting both sides and amending about once a second:
-7 594 actions, 233 fills, 43 reconnects forced by the venue, zero timeouts, and no order left
-unmanaged. That run is where the 1.4.1 fixes come from — five ways to lose track of a resting order,
-all of which need a reconnect with an action in flight to show themselves.
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#verification-matrix) has the matrix; a full mainnet log
-is in [docs/RUNNING.md §4](docs/RUNNING.md#4-acceptance-run-against-a-live-venue).
-
-The venue answers an order in about 0.8 s, so the client is four orders of magnitude away from
-being the bottleneck. What the microseconds buy is a path with no allocations and no locks in it,
-which is what you want inside your own hot loop.
+and both transports. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#verification-matrix) has the
+matrix; a full mainnet log is in
+[docs/RUNNING.md §4](docs/RUNNING.md#4-acceptance-run-against-a-live-venue).
 
 ## Quick start
 
