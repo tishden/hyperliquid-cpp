@@ -16,6 +16,18 @@ All notable changes to this project are documented here. The project follows
   arrived) and ignores an answer about any other oid. Found by an eight-hour testnet soak: the venue
   closes idle WebSockets every few minutes (`code 1000: Expired`), and every drop with an amendment in
   flight leaked one order.
+- **The mirror of the same mistake: a modify that *did* land also lost the order.** When the
+  acknowledgement of an amendment is lost with the socket, the venue may already have applied it —
+  the oid the client knows is canceled and a new one carrying the same cloid rests. Probing that oid
+  answers "canceled", so the client buried a live order exactly as before (found by the soak two
+  hours after the first fix, with the quote still resting on testnet under oid 60562251190). Neither
+  single-order question can find the successor — an oid probe names a generation, a cloid probe
+  names the first one — so an unresolved modify is now reconciled against `frontendOpenOrders`,
+  where the live generation of a cloid can actually be identified; the oid probe remains the
+  fallback for a cloid that is not resting at all.
+- Belt and braces: an order the venue lists as open under a different oid than the one the table
+  buried is **revived** from that listing. Terminal states are sticky against stale updates, not
+  against the venue's current answer to "what is resting right now".
 - After a reconnect, an open order on the venue that matches nothing in the table is now **adopted**
   (`adoptExistingOrders`, on by default) instead of being ignored, so an order whose acknowledgement
   was lost with the socket reappears in `liveOrders()` and is covered by `cancelAll()`. The listing is

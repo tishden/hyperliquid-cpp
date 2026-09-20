@@ -438,6 +438,7 @@ private:
     void recomputeFills(Tracked& t) noexcept;
     void setOid(Tracked& t, std::uint64_t oid);
     void reconcile(const Cloid& cloid);
+    void reconcileAmended(const Cloid& cloid);
     void reconcileAll();
     void emit(Tracked& t);
     Tracked* find(const Cloid& cloid) noexcept;

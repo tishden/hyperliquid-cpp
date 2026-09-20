@@ -273,7 +273,26 @@ std::size_t ExchangeClient::adoptFromListing(const std::vector<OpenOrder>& openO
     std::size_t adopted = 0;
     for (const auto& open : openOrders) {
         const Cloid cloid = open.cloid.value_or(Cloid{kExternalCloidHigh, open.oid});
-        if (find(cloid) != nullptr || findByOid(open.oid) != nullptr) {
+        if (Tracked* known = find(cloid); known != nullptr) {
+            // The venue says this cloid is resting right now. If the table buried it under an oid
+            // the venue has since replaced — an amendment whose outcome we resolved wrongly — the
+            // listing wins: a terminal state is sticky against stale *updates*, not against the
+            // current truth, and an order nobody manages is the failure this listing exists to
+            // prevent.
+            if (isTerminal(known->order.state) && known->order.oid != open.oid) {
+                logf(LogLevel::Warn, "exchange: %s is %s in the table but open on the venue as oid %llu — reviving",
+                     cloid.toString().c_str(), std::string{toString(known->order.state)}.c_str(),
+                     static_cast<unsigned long long>(open.oid));
+                known->order.state = OrderState::Open;
+                known->order.lastError.clear();
+                setOid(*known, open.oid);
+                applyVenueStatus(*known, OrderUpdateStatus::Open, "open", open.limitPx, open.origSz);
+                emit(*known);
+                ++adopted;
+            }
+            continue;
+        }
+        if (findByOid(open.oid) != nullptr) {
             continue;
         }
         Tracked& t = track(cloid);
@@ -982,7 +1001,7 @@ void ExchangeClient::applyActionResult(const PendingAction& pending, const Resul
                 case ActionKind::Modify:
                     o.modifyPending = false;
                     if (isTransportFailure(err) || t->canceledDuringModify) {
-                        reconcile(cloid);
+                        reconcileAmended(cloid);
                     }
                     break;
                 case ActionKind::Other:
@@ -1316,6 +1335,38 @@ void ExchangeClient::reconcile(const Cloid& cloid) {
     } else {
         info_.orderStatus(user_, cloid, apply);
     }
+}
+
+void ExchangeClient::reconcileAmended(const Cloid& cloid) {
+    // A modify whose outcome is unknown may well have been applied: the venue then cancels the oid
+    // we know and opens a new one carrying the same cloid. Neither single-order question can find
+    // that successor — an oid probe answers "canceled" about the generation we named, and a cloid
+    // probe answers about the *first* order placed under it. Both bury a resting order. The list of
+    // open orders is the only place the live generation of a cloid can be identified, so ask that
+    // first and fall back to the oid probe when the cloid is not resting at all (filled, or really
+    // canceled).
+    ++stats_.reconciles;
+    info_.openOrders(user_, [this, cloid](const Result<std::vector<OpenOrder>>& r) {
+        Tracked* t = find(cloid);
+        if (t == nullptr) {
+            return;
+        }
+        if (!r) {
+            logf(LogLevel::Warn, "exchange: reconcile of amended %s could not list open orders (%s)",
+                 cloid.toString().c_str(), r.error().message.c_str());
+            reconcile(cloid);
+            return;
+        }
+        for (const auto& open : r.value()) {
+            if (open.cloid && *open.cloid == cloid) {
+                setOid(*t, open.oid);
+                applyVenueStatus(*t, OrderUpdateStatus::Open, "open", open.limitPx, open.origSz);
+                emit(*t);
+                return;
+            }
+        }
+        reconcile(cloid);
+    });
 }
 
 void ExchangeClient::reconcileAll() {

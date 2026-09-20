@@ -314,6 +314,13 @@ acknowledgement never arrived and which therefore has no oid yet.
 > `canceled` about the superseded generation while the live order is resting. Believing that marks a
 > working order terminal and leaks it: the strategy stops managing an order that is still on the
 > venue. An answer about an oid other than the tracked one is ignored for the same reason.
+>
+> **And why not always by oid either.** A modify whose acknowledgement was lost may have been
+> applied: the venue then cancels the oid the client knows and opens a new one under the same cloid.
+> An oid probe answers `canceled` about that replaced generation — the same leak from the other
+> side. So an **unresolved modify** is reconciled against `frontendOpenOrders`, the only answer that
+> identifies which oid currently carries the cloid; the oid probe follows only when the cloid is not
+> resting at all, to learn whether it filled or was really canceled.
 
 After a reconnect the client asks for the whole list first (`frontendOpenOrders`) and only probes the orders
 missing from it individually — one request instead of one per live order. Anything in that list the client
@@ -325,12 +332,14 @@ resting unmanaged.
 |---|---|
 | order action timed out / socket died | the order may or may not exist |
 | cancel acknowledged with an error | filled or canceled? |
-| modify failed or was interrupted | which version of the order is live? |
+| modify failed or was interrupted | which version of the order is live? (answered by the open-orders listing) |
 | client became ready again after a reconnect | anything may have happened while disconnected |
 | an open order on the venue matches nothing in the table | it is adopted, not ignored |
 
 | Venue answer | Effect |
 |---|---|
+| the cloid rests in `frontendOpenOrders` (after an unresolved modify) | that oid is adopted and the order stays live |
+| an open order under a cloid the table has buried terminally | revived from the listing — the venue is authoritative about what rests now |
 | `order` with status | apply status (terminal rules hold), store oid, update price/size |
 | `unknownOid` | a `PendingNew` order becomes `Rejected` ("order not found on venue"); other states unchanged |
 | request failed | retried every 2 s while the order is live and the client runs |

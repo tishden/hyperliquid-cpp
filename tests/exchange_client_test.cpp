@@ -732,6 +732,64 @@ TEST_F(ExchangeClientTest, OneRejectionIsReportedOnce) {
     EXPECT_EQ(rejected, 1) << "one rejection, one callback";
 }
 
+// The other half of the amendment problem. A modify whose acknowledgement is lost may still have
+// been applied: the venue cancels the oid the client knows and opens a new one under the same
+// cloid. Probing that oid answers "canceled" — believing it buries an order that is resting, which
+// is how the testnet soak leaked a quote. Only the open-orders listing identifies the successor.
+TEST_F(ExchangeClientTest, ModifyAppliedButUnacknowledgedKeepsTheOrderUnderItsNewOid) {
+    auto client = startReady();
+    const auto cloid = client->placeOrder(btcBuy()).value();
+    ASSERT_TRUE(runUntil(loop, [&] { return client->findOrder(cloid)->state == OrderState::Open; }));
+    const std::uint64_t oldOid = client->findOrder(cloid)->oid;
+    const std::uint64_t newOid = oldOid + 7;
+
+    // The venue applied the amendment; the old generation is canceled and the new one rests.
+    fake.orderStatusByKey[std::to_string(oldOid)] =
+        R"({"status":"order","order":{"order":{"coin":"BTC","side":"B","limitPx":"50000.0","sz":"0.002","oid":)" +
+        std::to_string(oldOid) + R"(,"timestamp":1,"origSz":"0.002","cloid":")" + cloid.toString() +
+        R"("},"status":"canceled","statusTimestamp":2}})";
+    fake.openOrdersResponse =
+        R"([{"coin":"BTC","side":"B","limitPx":"49000.0","sz":"0.002","oid":)" + std::to_string(newOid) +
+        R"(,"timestamp":1700000000000,"origSz":"0.002","cloid":")" + cloid.toString() +
+        R"(","reduceOnly":false,"orderType":"Limit","tif":"Alo","isTrigger":false,"triggerPx":"0.0"}])";
+
+    // The acknowledgement never comes: the socket dies with the modify in flight.
+    fake.autoRespond = false;
+    ASSERT_FALSE(client->modify(cloid, d("49000"), d("0.002")));
+    ASSERT_TRUE(runUntil(loop, [&] { return client->findOrder(cloid)->modifyPending; }));
+    fake.autoRespond = true;
+    fake.venue.dropWebSockets();
+    ASSERT_TRUE(runUntil(loop, [&] { return listener.ready == 2; }));
+    ASSERT_TRUE(runUntil(loop, [&] { return client->findOrder(cloid)->oid == newOid; }));
+
+    const hl::Order* o = client->findOrder(cloid);
+    ASSERT_NE(o, nullptr);
+    EXPECT_TRUE(o->isLive()) << "the amended order rests on the venue; state is " << hl::toString(o->state);
+    EXPECT_EQ(o->px, d("49000"));
+    EXPECT_EQ(client->liveOrders("BTC").size(), 1U);
+}
+
+// Belt and braces for the same class of mistake: whatever the table believes, an order the venue
+// lists as open under a different oid is alive and must be managed again.
+TEST_F(ExchangeClientTest, AnOrderBuriedInTheTableIsRevivedByTheOpenOrdersListing) {
+    auto client = startReady();
+    const auto cloid = client->placeOrder(btcBuy()).value();
+    ASSERT_TRUE(runUntil(loop, [&] { return client->findOrder(cloid)->state == OrderState::Open; }));
+    const std::uint64_t oid = client->findOrder(cloid)->oid;
+    fake.pushOrderUpdate("BTC", "B", "50000", "0.002", "0.002", oid, cloid.toString(), "canceled");
+    ASSERT_TRUE(runUntil(loop, [&] { return client->findOrder(cloid)->state == OrderState::Canceled; }));
+
+    fake.openOrdersResponse =
+        R"([{"coin":"BTC","side":"B","limitPx":"49000.0","sz":"0.002","oid":)" + std::to_string(oid + 11) +
+        R"(,"timestamp":1700000000000,"origSz":"0.002","cloid":")" + cloid.toString() +
+        R"(","reduceOnly":false,"orderType":"Limit","tif":"Alo","isTrigger":false,"triggerPx":"0.0"}])";
+    fake.venue.dropWebSockets();
+    ASSERT_TRUE(runUntil(loop, [&] { return listener.ready == 2; }));
+    ASSERT_TRUE(runUntil(loop, [&] { return client->findOrder(cloid)->isLive(); }));
+    EXPECT_EQ(client->findOrder(cloid)->oid, oid + 11);
+    EXPECT_EQ(client->liveOrders("BTC").size(), 1U);
+}
+
 // A reconnect is the moment an order can slip out of the table: the acknowledgement that would
 // have named its oid went down with the socket. Whatever the venue still reports open and the
 // client cannot account for must be adopted, not left resting unmanaged.
