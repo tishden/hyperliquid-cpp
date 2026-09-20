@@ -1516,6 +1516,13 @@ void ExchangeClient::emit(Tracked& t) {
     if (t.emitted == now) {
         return;  // the same news twice: onOrderUpdate reports changes, not messages
     }
+    if (logLevel() <= LogLevel::Debug && (now.state != t.emitted.state || now.oid != t.emitted.oid)) {
+        // The state machine's own account of what it decided and when — without it, working out
+        // why an order was abandoned means guessing from the venue's record alone.
+        logf(LogLevel::Debug, "exchange: %s oid %llu: %s -> %s%s%s", o.cloid.toString().c_str(),
+             static_cast<unsigned long long>(o.oid), std::string{toString(t.emitted.state)}.c_str(),
+             std::string{toString(o.state)}.c_str(), o.lastError.empty() ? "" : " — ", o.lastError.c_str());
+    }
     t.emitted = now;
     t.order.updatedMs = EventLoop::wallClockMs();
     listener_.onOrderUpdate(t.order);
