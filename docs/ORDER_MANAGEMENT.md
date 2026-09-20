@@ -301,7 +301,25 @@ the order continuous:
 | update with another status for a new oid | ignored (the ack will tell) |
 | ack success `resting{oid}` | `px`, `origSz` ← targets; retire old oid if different; state as for an order ack; `lastError` cleared |
 | ack error, or transport failure, or `canceledDuringModify` without success | reconcile |
+| update for an oid **older** than the tracked one | ignored — it describes a generation the order has left behind |
 | later update for a **retired** oid | ignored |
+
+### One rule behind the amendment cases
+
+`modify` does not change an order, it **replaces** it: the venue cancels the oid it had and opens a
+new one carrying the same cloid. So an order is a *chain of generations*, and every identifier names
+one link of it — the cloid names the first, an oid names exactly one, and the venue's answers and
+updates can describe any of them. The invariant the client holds:
+
+> Nothing that describes a superseded generation may change the state of the order.
+
+All three of the failures this rule was learned from looked the same from outside — a live quote
+resting on the venue with the strategy no longer managing it — and each came from a different
+identifier being believed: a cloid probe answering about the first generation, an oid probe
+answering about a generation an amendment had replaced, and a late `canceled` update for an oid from
+several amendments ago. The rule is enforced in three places: reconciliation prefers the oid, an
+unresolved modify is settled against the open-orders listing, and updates for an older oid are
+dropped.
 
 ## 10. Reconciliation
 

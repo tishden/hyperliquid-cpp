@@ -25,6 +25,14 @@ All notable changes to this project are documented here. The project follows
   names the first one — so an unresolved modify is now reconciled against `frontendOpenOrders`,
   where the live generation of a cloid can actually be identified; the oid probe remains the
   fallback for a cloid that is not resting at all.
+- **And the third way to lose the same order: a late `canceled` for a generation two amendments
+  ago.** `modify` replaces an order with a new oid under the same cloid, and the update announcing
+  the *old* one's cancellation can arrive after several further amendments. The bounded list of
+  retired oids only remembers the last few, so at one amendment per second such an update was taken
+  for news about the live order, which it then buried. Updates about an oid older than the tracked
+  one are now dropped outright: the venue issues oids in increasing order, so they can only describe
+  a generation the order has left behind. `docs/ORDER_MANAGEMENT.md` §9 states the invariant these
+  three fixes share.
 - Belt and braces: an order the venue lists as open under a different oid than the one the table
   buried is **revived** from that listing. Terminal states are sticky against stale updates, not
   against the venue's current answer to "what is resting right now".

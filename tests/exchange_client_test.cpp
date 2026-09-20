@@ -732,6 +732,34 @@ TEST_F(ExchangeClientTest, OneRejectionIsReportedOnce) {
     EXPECT_EQ(rejected, 1) << "one rejection, one callback";
 }
 
+// A quoter that amends once a second outruns any bounded memory of retired oids: the venue's
+// `canceled` for the generation an amendment replaced can arrive after several further amendments.
+// Such an update must not bury the order that is actually resting — this leaked a live quote onto
+// testnet roughly once an hour.
+TEST_F(ExchangeClientTest, LateCancelOfAnOldGenerationDoesNotKillTheLiveOrder) {
+    auto client = startReady();
+    const auto cloid = client->placeOrder(btcBuy()).value();
+    ASSERT_TRUE(runUntil(loop, [&] { return client->findOrder(cloid)->state == OrderState::Open; }));
+    const std::uint64_t firstOid = client->findOrder(cloid)->oid;
+
+    for (int i = 1; i <= 6; ++i) {  // more amendments than the retired-oid list can remember
+        ASSERT_FALSE(client->modify(cloid, d("50000") - d("1").mul(Decimal::fromInt(i)), d("0.002")));
+        ASSERT_TRUE(runUntil(loop, [&] { return !client->findOrder(cloid)->modifyPending; }));
+    }
+    const std::uint64_t liveOid = client->findOrder(cloid)->oid;
+    ASSERT_GT(liveOid, firstOid);
+
+    // The venue reports, late, that the very first generation was canceled by the first amendment.
+    fake.pushOrderUpdate("BTC", "B", "50000", "0.002", "0.002", firstOid, cloid.toString(), "canceled");
+    loop.runOnce(50);
+    loop.runOnce(50);
+
+    const hl::Order* o = client->findOrder(cloid);
+    ASSERT_NE(o, nullptr);
+    EXPECT_TRUE(o->isLive()) << "the amended order rests on the venue; state is " << hl::toString(o->state);
+    EXPECT_EQ(o->oid, liveOid) << "a superseded oid must not become the tracked one";
+}
+
 // The other half of the amendment problem. A modify whose acknowledgement is lost may still have
 // been applied: the venue cancels the oid the client knows and opens a new one under the same
 // cloid. Probing that oid answers "canceled" — believing it buries an order that is resting, which

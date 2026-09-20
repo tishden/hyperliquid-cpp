@@ -1205,6 +1205,16 @@ void ExchangeClient::onOrderUpdates(std::span<const OrderUpdateMsg> updates) {
             setOid(*t, u.oid);
         }
         if (u.oid != 0 && t->order.oid != 0 && u.oid != t->order.oid) {
+            // The venue issues oids in increasing order, and `modify` replaces an order with a
+            // newer one under the same cloid. News about an *older* oid therefore describes a
+            // generation this order has already left behind — most often a `canceled` that the
+            // amendment itself caused, arriving late. Applying it would kill an order that is
+            // resting, which is how a fast-quoting soak leaked a quote every few hours: the
+            // bounded list of retired oids below only remembers the last few amendments, and at
+            // one amendment per second a late update easily outlives it.
+            if (u.oid < t->order.oid) {
+                continue;
+            }
             const auto& retired = t->retiredOids;
             if (std::find(retired.begin(), retired.end(), u.oid) != retired.end()) {
                 continue;  // stale update for an order replaced by modify
