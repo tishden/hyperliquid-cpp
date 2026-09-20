@@ -290,7 +290,8 @@ std::size_t ExchangeClient::adoptFromListing(const std::vector<OpenOrder>& openO
                      static_cast<unsigned long long>(open.oid));
                 known->order.state = OrderState::Open;
                 known->order.lastError.clear();
-                setOid(*known, open.oid);
+                setOid(*known, open.oid);  // resets the fill accounting: this is another generation
+                known->order.filledSz = open.origSz - open.sz;
                 applyVenueStatus(*known, OrderUpdateStatus::Open, "open", open.limitPx, open.origSz);
                 emit(*known);
                 ++adopted;
@@ -1190,6 +1191,16 @@ void ExchangeClient::setOid(Tracked& t, std::uint64_t oid) {
         return;
     }
     if (t.order.oid != 0) {
+        // A new oid under the same cloid means `modify` replaced the order: the venue canceled the
+        // one that carried those fills and opened a fresh one of the requested size with nothing
+        // filled. Carrying the old generation's fills over would understate what is resting — and
+        // once they reached the new `origSz`, would declare a working order fully filled.
+        t.fillSum = Decimal{};
+        t.fillNotional = 0;
+        t.ackFilledSz = Decimal{};
+        t.ackAvgPx = Decimal{};
+        t.order.filledSz = Decimal{};
+        t.order.avgFillPx = Decimal{};
         oidIndex_.erase(t.order.oid);
     }
     t.order.oid = oid;
@@ -1288,6 +1299,16 @@ void ExchangeClient::onUserFills(const UserFillsMsg& msg) {
         listener_.onFill(fill);
         if (t == nullptr) {
             continue;
+        }
+        Order& order = t->order;
+        if (f.oid != 0 && order.oid != 0 && f.oid != order.oid) {
+            if (f.oid < order.oid) {
+                // A fill of a generation this order has left behind. It moved the position above,
+                // where fills are absolute statements about it, but it is not part of what rests
+                // now: the amendment replaced that order.
+                continue;
+            }
+            setOid(*t, f.oid);  // the amendment landed; its acknowledgement has not arrived yet
         }
         t->fillSum += f.sz;
         t->fillNotional += static_cast<Int128>(f.px.raw()) * f.sz.raw();

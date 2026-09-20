@@ -791,6 +791,37 @@ TEST_F(ExchangeClientTest, ModifyErrorIsSettledAgainstTheListingNotTheOldOid) {
     EXPECT_EQ(client->liveOrders("BTC").size(), 1U);
 }
 
+// `modify` replaces an order: the venue cancels the one that carried the fills so far and opens a
+// fresh one of the requested size with nothing filled. Carrying the old fills over understates what
+// is resting, and once they reach the new size the client declares a working order fully filled.
+TEST_F(ExchangeClientTest, AmendingAPartiallyFilledOrderStartsItsFillCountAfresh) {
+    auto client = startReady();
+    const auto cloid = client->placeOrder(btcBuy("50000", "0.01")).value();
+    ASSERT_TRUE(runUntil(loop, [&] { return client->findOrder(cloid)->state == OrderState::Open; }));
+    const std::uint64_t firstOid = client->findOrder(cloid)->oid;
+
+    fake.pushFill(FakeHyperliquid::fillJson("BTC", "B", "0.006", "50000", "0", 11, firstOid, cloid.toString()));
+    ASSERT_TRUE(runUntil(loop, [&] { return client->findOrder(cloid)->filledSz == d("0.006"); }));
+    EXPECT_EQ(client->findOrder(cloid)->state, OrderState::PartiallyFilled);
+    EXPECT_EQ(client->findOrder(cloid)->remainingSz(), d("0.004"));
+
+    // Amend back to the full size: the venue opens a new order, untouched.
+    ASSERT_FALSE(client->modify(cloid, d("49000"), d("0.01")));
+    ASSERT_TRUE(runUntil(loop, [&] { return !client->findOrder(cloid)->modifyPending; }));
+    const hl::Order* o = client->findOrder(cloid);
+    ASSERT_NE(o->oid, firstOid);
+    EXPECT_EQ(o->filledSz, Decimal{}) << "the replacement has nothing filled";
+    EXPECT_EQ(o->remainingSz(), d("0.01"));
+    EXPECT_TRUE(o->isLive());
+
+    // A fill of the generation that was replaced arrives late: it is not part of what rests now.
+    fake.pushFill(FakeHyperliquid::fillJson("BTC", "B", "0.004", "50000", "0.006", 12, firstOid, cloid.toString()));
+    loop.runOnce(50);
+    loop.runOnce(50);
+    EXPECT_EQ(client->findOrder(cloid)->filledSz, Decimal{}) << "a retired generation's fill must not count here";
+    EXPECT_TRUE(client->findOrder(cloid)->isLive()) << "state is " << hl::toString(client->findOrder(cloid)->state);
+}
+
 // A quoter that amends once a second outruns any bounded memory of retired oids: the venue's
 // `canceled` for the generation an amendment replaced can arrive after several further amendments.
 // Such an update must not bury the order that is actually resting — this leaked a live quote onto

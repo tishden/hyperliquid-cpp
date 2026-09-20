@@ -25,6 +25,14 @@ All notable changes to this project are documented here. The project follows
   names the first one — so an unresolved modify is now reconciled against `frontendOpenOrders`,
   where the live generation of a cloid can actually be identified; the oid probe remains the
   fallback for a cloid that is not resting at all.
+- **Amending a partially filled order carried its fills onto the replacement.** `modify` does not
+  change an order — the venue cancels the one that holds those fills and opens a fresh one of the
+  requested size with nothing filled. The client kept the old generation's filled size, so
+  `remainingSz()` understated what was resting, and once those fills reached the new `origSz` the
+  order was declared `Filled` while it sat in the book. Fill accounting now belongs to the
+  generation that earned it: a new oid starts it afresh, and a late fill naming a generation the
+  order has left behind moves the position (fills are absolute statements about it) without
+  counting against what rests now.
 - **A venue error on an amendment was believed too literally.** The venue can answer a
   `batchModify` with an error for an amendment it has nonetheless applied — the old oid canceled,
   the replacement resting under the same cloid. That answer sent reconciliation to the oid the
