@@ -4,7 +4,28 @@
 
 #include <cinttypes>
 #include <algorithm>
+#include <chrono>
+#include <cstdarg>
 #include <cstdio>
+#include <ctime>
+
+namespace {
+/// Print one line prefixed with the wall-clock time, so the demo's own output can be lined up with
+/// the library log and with the venue's record of the same moment.
+void say(const char* fmt, ...) {
+    const auto now = std::chrono::system_clock::now();
+    const auto secs = std::chrono::floor<std::chrono::seconds>(now);
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - secs).count();
+    const std::time_t t = std::chrono::system_clock::to_time_t(secs);
+    std::tm tm{};
+    ::localtime_r(&t, &tm);
+    std::printf("%02d:%02d:%02d.%03d ", tm.tm_hour, tm.tm_min, tm.tm_sec, static_cast<int>(ms));
+    std::va_list args;
+    va_start(args, fmt);
+    std::vprintf(fmt, args);
+    va_end(args);
+}
+}  // namespace
 
 namespace example {
 
@@ -25,10 +46,10 @@ Quoter::Quoter(hl::EventLoop& loop, QuoterSettings settings) : loop_(loop), sett
 
 // ── market data ─────────────────────────────────────────────────────────────
 
-void Quoter::onConnected() { std::printf("[md] connected, waiting for %s book\n", settings_.coin.c_str()); }
+void Quoter::onConnected() { say("[md] connected, waiting for %s book\n", settings_.coin.c_str()); }
 
 void Quoter::onDisconnected(std::string_view reason) {
-    std::printf("[conn] disconnected: %.*s (auto-reconnecting)\n", static_cast<int>(reason.size()), reason.data());
+    say("[conn] disconnected: %.*s (auto-reconnecting)\n", static_cast<int>(reason.size()), reason.data());
 }
 
 void Quoter::onBookUpdate(const hl::OrderBook& book, BookUpdate /*kind*/) {
@@ -45,7 +66,7 @@ void Quoter::onReady() {
         positionSeeded_ = true;
     }
     const hl::AssetInfo* asset = exchange_->assets().find(settings_.coin);
-    std::printf("[ex] ready: account %s, signer %s, %s asset=%u szDecimals=%d, position %s\n",
+    say("[ex] ready: account %s, signer %s, %s asset=%u szDecimals=%d, position %s\n",
                 hl::toHex(exchange_->accountAddress()).c_str(), hl::toHex(exchange_->signerAddress()).c_str(),
                 settings_.coin.c_str(), asset != nullptr ? asset->asset : 0U, asset != nullptr ? asset->szDecimals : -1,
                 str(exchange_->position(settings_.coin)).c_str());
@@ -67,7 +88,7 @@ void Quoter::onOrderUpdate(const hl::Order& order) {
         // pending flags settle (the venue's answer arrives as a stream update and as the
         // acknowledgement of the action), and only the first of those is news.
         ++rejects_;
-        std::printf("[ex] %s %s @ %s rejected: %s\n", std::string{hl::toString(order.side)}.c_str(), str(order.origSz).c_str(),
+        say("[ex] %s %s @ %s rejected: %s\n", std::string{hl::toString(order.side)}.c_str(), str(order.origSz).c_str(),
                     str(order.px).c_str(), order.lastError.c_str());
         // Exponential back-off on repeated rejections (1 s, 2 s, 4 s … 60 s) so a permanent
         // error such as an unfunded account does not turn into a request storm.
@@ -94,13 +115,13 @@ void Quoter::onFill(const hl::Fill& fill) {
     volumeUsd_ += notional;
     cash_ += fill.side == Side::Sell ? notional : -notional;
     cash_ -= fill.fee;
-    std::printf("[fill] %s %s %s @ %s (%s, fee %s %s) → position %s\n", std::string{hl::toString(fill.side)}.c_str(),
+    say("[fill] %s %s %s @ %s (%s, fee %s %s) → position %s\n", std::string{hl::toString(fill.side)}.c_str(),
                 str(fill.sz).c_str(), fill.coin.c_str(), str(fill.px).c_str(), fill.crossed ? "taker" : "maker",
                 str(fill.fee).c_str(), fill.feeToken.c_str(), str(fill.endPosition()).c_str());
 }
 
 void Quoter::onError(const hl::Error& error) {
-    std::printf("[ex] error (%s): %s\n", std::string{hl::toString(error.kind)}.c_str(), error.message.c_str());
+    say("[ex] error (%s): %s\n", std::string{hl::toString(error.kind)}.c_str(), error.message.c_str());
 }
 
 // ── strategy ────────────────────────────────────────────────────────────────
@@ -129,7 +150,7 @@ void Quoter::requote(const hl::OrderBook& book) {
     if (std::abs(lastQuotes_.inventoryRatio) >= 1.0 &&
         std::abs(position.toDouble() * lastQuotes_.fair.toDouble()) > 1.5 * settings_.quote.maxPositionUsd.toDouble()) {
         haltedByRisk_ = true;
-        std::printf("[risk] position %s beyond 150%% of limit — canceling quotes and halting\n", str(position).c_str());
+        say("[risk] position %s beyond 150%% of limit — canceling quotes and halting\n", str(position).c_str());
         if (exchange_ != nullptr) {
             (void)exchange_->cancelAll(settings_.coin);
         }
@@ -169,7 +190,7 @@ void Quoter::manageSide(Side side, const std::optional<Decimal>& target, Decimal
         req.tif = hl::Tif::Alo;
         auto placed = exchange_->placeOrder(req);
         if (!placed) {
-            std::printf("[strategy] place %s failed: %s\n", std::string{hl::toString(side)}.c_str(),
+            say("[strategy] place %s failed: %s\n", std::string{hl::toString(side)}.c_str(),
                         placed.error().message.c_str());
             slot.lastActionMs = now;
             return;
@@ -188,7 +209,7 @@ void Quoter::manageSide(Side side, const std::optional<Decimal>& target, Decimal
         return;
     }
     if (hl::Error err = exchange_->modify(live->cloid, *target, size)) {
-        std::printf("[strategy] modify failed: %s\n", err.message.c_str());
+        say("[strategy] modify failed: %s\n", err.message.c_str());
     } else {
         ++amendments_;
     }
@@ -202,7 +223,7 @@ void Quoter::refreshDeadManSwitch() {
     const std::int64_t at = hl::EventLoop::wallClockMs() + 90'000;
     (void)exchange_->scheduleCancel(at, [](const hl::Result<hl::ExchangeResponse>& r) {
         if (!r) {
-            std::printf("[ex] scheduleCancel not accepted: %s\n", r.error().message.c_str());
+            say("[ex] scheduleCancel not accepted: %s\n", r.error().message.c_str());
         }
     });
     loop_.addTimer(30'000, [this] { refreshDeadManSwitch(); });
@@ -212,7 +233,7 @@ void Quoter::printStatus() {
     loop_.addTimer(settings_.statusIntervalMs, [this] { printStatus(); });
     const hl::OrderBook* book = md_ != nullptr ? md_->book(settings_.coin) : nullptr;
     if (book == nullptr || !book->isValid()) {
-        std::printf("[status] waiting for %s book…\n", settings_.coin.c_str());
+        say("[status] waiting for %s book…\n", settings_.coin.c_str());
         return;
     }
     const Decimal mid = book->mid();
@@ -244,7 +265,7 @@ void Quoter::printStatus() {
             latency = buf;
         }
     }
-    std::printf("[status] %s mid=%s spread=%.2fbps%s pos=%s fills=%" PRIu64 " vol=$%s pnl≈$%s%s%s\n",
+    say("[status] %s mid=%s spread=%.2fbps%s pos=%s fills=%" PRIu64 " vol=$%s pnl≈$%s%s%s\n",
                 settings_.coin.c_str(), str(mid).c_str(), book->spreadBps(), quotes.c_str(), str(position).c_str(),
                 fills_, str(volumeUsd_).c_str(), str(pnl).c_str(), latency.c_str(),
                 haltedByRisk_ ? "  [HALTED: position beyond 150% of the limit, quoting stopped]" : "");
@@ -255,7 +276,7 @@ void Quoter::shutdown(std::int64_t timeoutMs) {
     if (exchange_ == nullptr || settings_.dryRun || !exchange_->isReady()) {
         return;
     }
-    std::printf("[shutdown] canceling %zu live order(s)…\n", exchange_->liveOrders(settings_.coin).size());
+    say("[shutdown] canceling %zu live order(s)…\n", exchange_->liveOrders(settings_.coin).size());
     (void)exchange_->cancelAll(settings_.coin);
     const std::int64_t deadline = hl::EventLoop::nowMs() + timeoutMs;
     while (!exchange_->liveOrders(settings_.coin).empty() && hl::EventLoop::nowMs() < deadline) {

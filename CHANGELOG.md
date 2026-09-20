@@ -69,6 +69,13 @@ All notable changes to this project are documented here. The project follows
   client does deliver it — is reported once rather than per update.
 - `CMakeLists.txt` and `Doxyfile` still declared 1.3.0 while the library reported 1.4.0.
 
+### Changed
+- **The log is timestamped.** Every line from the default log sink, and every event line the demo
+  quoter prints, now starts with `HH:MM:SS.mmm`. A trading log without a clock cannot be lined up
+  with the venue's own record of the same moment, which is the first thing anyone does when an order
+  behaves unexpectedly — during the soak that gap cost hours of guessing. The end-of-run summary
+  block stays unstamped; it is one block, not a stream of events.
+
 ### Documentation
 - `docs/ORDER_MANAGEMENT.md` §10 states why reconciliation cannot use the cloid after an amendment,
   and that unaccounted open orders are adopted on reconnect.

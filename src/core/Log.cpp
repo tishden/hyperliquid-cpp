@@ -3,7 +3,9 @@
 #include "hl/core/Log.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdio>
+#include <ctime>
 
 namespace hl {
 
@@ -11,8 +13,19 @@ namespace {
 
 void defaultSink(LogLevel level, std::string_view message, void* /*userData*/) {
     static constexpr const char* kNames[] = {"TRACE", "DEBUG", "INFO", "WARN", "ERROR", "OFF"};
-    std::fprintf(stderr, "[hl][%s] %.*s\n", kNames[static_cast<int>(level)], static_cast<int>(message.size()),
-                 message.data());
+    // A trading log without a clock cannot be matched against the venue's own record of what
+    // happened, which is the first thing anyone does when an order behaves unexpectedly.
+    const auto now = std::chrono::system_clock::now();
+    const auto secs = std::chrono::floor<std::chrono::seconds>(now);
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - secs).count();
+    const std::time_t t = std::chrono::system_clock::to_time_t(secs);
+    std::tm tm{};
+    ::localtime_r(&t, &tm);
+    char stamp[16];
+    std::snprintf(stamp, sizeof(stamp), "%02d:%02d:%02d.%03d", tm.tm_hour, tm.tm_min, tm.tm_sec,
+                  static_cast<int>(ms));
+    std::fprintf(stderr, "%s [hl][%s] %.*s\n", stamp, kNames[static_cast<int>(level)],
+                 static_cast<int>(message.size()), message.data());
 }
 
 std::atomic<LogSink> gSink{&defaultSink};
