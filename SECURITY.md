@@ -1,26 +1,31 @@
 # Security policy
 
-hyperliquid-cpp holds a private key in memory and signs orders with real money behind them. Report
-anything that could leak a key, sign something other than what the caller asked for, or make the
-client lose track of live orders.
+hyperliquid-cpp is a research project. It is thoroughly tested — 200 tests, sanitizers, a live acceptance run
+on testnet and mainnet — and benchmarked, but it comes with **no warranty and no commitment to support**.
+
+## What is not promised
+
+- **No warranty.** The software is provided "as is", without warranties or conditions of any kind, as stated
+  in sections 7 and 8 of the [Apache License 2.0](LICENSE). You trade with it at your own risk, including the
+  risk of losing funds.
+- **No commitment to fix.** Reported bugs and vulnerabilities may be fixed, or may not; there is no response
+  time and no guarantee of a fix or an advisory.
+- **No commitment to maintain.** Further development, updates for changes in the Hyperliquid API and support
+  of any version are not promised. Review the code and run your own tests before putting money behind it.
 
 ## Reporting a vulnerability
 
-Do not open a public issue. Use GitHub's private reporting (**Security → Report a vulnerability** on the
-repository page) or write to Denis Tishkov <denis8825@ya.ru>.
+Report privately through GitHub: **Security → Report a vulnerability** on the repository page. Do not open a
+public issue for a vulnerability.
 
-Please include the affected version or commit, how to reproduce it, and the impact as you see it. You
-will get an answer within a week; a fix and an advisory follow once the fix is released.
+Include the affected version or commit, how to reproduce it and the impact as you see it. Reports are
+welcome and will be read, subject to the section above.
 
-## Supported versions
+## What is worth reporting
 
-Only the latest release receives fixes.
-
-## Scope
-
-In scope: the library under `include/` and `src/`, and the examples insofar as they handle keys.
-
-By design the library cannot move funds — withdrawals, transfers and staking need user-signed actions it
-does not implement ([docs/COVERAGE.md](docs/COVERAGE.md)). A way around that is in scope and serious.
+Anything that could leak a key, sign something other than what the caller asked for, or make the client lose
+track of live orders. By design the library cannot move funds — withdrawals, transfers and staking need
+user-signed actions it does not implement ([docs/COVERAGE.md](docs/COVERAGE.md)); a way around that is the
+most serious kind of report.
 
 Out of scope: the Hyperliquid venue itself, and losses from strategy logic built on top of the library.

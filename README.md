@@ -264,6 +264,12 @@ docs/                reference and guides
 scripts/             build.sh, test.sh, bench.sh, docs.sh, ci.sh, check-docs.py
 ```
 
+## Status and warranty
+
+A research project: thoroughly tested and benchmarked, but provided **as is**, with no warranty, no commitment
+to fix bugs or vulnerabilities, and no commitment to further development or support. Trading with it is at
+your own risk — see [SECURITY.md](SECURITY.md) and sections 7–8 of the [licence](LICENSE).
+
 ## Licence
 
 [Apache License 2.0](LICENSE): use it commercially, modify it, ship it in open or closed products. Keep the
@@ -272,8 +278,9 @@ copyright and [NOTICE](NOTICE) in what you distribute. Third-party components an
 
 ## Contributing
 
-Bug reports, venue quirks and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Security
-issues go through [SECURITY.md](SECURITY.md), not public issues.
+Bug reports, venue quirks and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) — though
+there is no commitment to act on them. Vulnerabilities are reported privately through GitHub, as described in
+[SECURITY.md](SECURITY.md).
 
 ---
 

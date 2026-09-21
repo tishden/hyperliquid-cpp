@@ -1,6 +1,8 @@
 # Contributing
 
-Bug reports, reports of venue behaviour the library gets wrong, and pull requests are welcome.
+Bug reports, reports of venue behaviour the library gets wrong, and pull requests are welcome. This is a
+research project maintained without any commitment: issues may stay unanswered and pull requests unmerged
+(see [SECURITY.md](SECURITY.md#what-is-not-promised)).
 
 ## Reporting a bug
 
@@ -15,7 +17,8 @@ A venue quirk — Hyperliquid answering or ordering messages differently from wh
 this library assumes — is the most valuable kind of report. A captured frame sequence is ideal; a
 regression test in `tests/` built on `MockVenue` is even better.
 
-Security issues go through [SECURITY.md](SECURITY.md), not public issues.
+Vulnerabilities are reported privately through GitHub (**Security → Report a vulnerability**), not in public
+issues — see [SECURITY.md](SECURITY.md).
 
 ## Pull requests
 
