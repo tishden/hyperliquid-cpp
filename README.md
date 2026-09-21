@@ -211,8 +211,9 @@ stopping…
 Three numbers in that output matter. `build+sign 0.007 ms` is everything the library does per
 action: encode, keccak, EIP-712, ECDSA, frame. `order rt 753 ms` is the venue — block
 production plus the network, and nothing a client can shorten. And `amendments 136` against
-`orders placed 2` is the quoting model working: quotes are moved with `modify` in place, which keeps
-the order id and its queue position instead of cancelling and re-placing.
+`orders placed 2` is the quoting model working: quotes are moved with `modify` — one action and one
+unit of the address budget per move instead of a cancel plus a new order. The venue still replaces the
+order (same cloid, new oid), so a moved quote joins the back of the queue at its new price.
 
 Credentials go in a `secrets/*.env` file (gitignored); the annotated
 [credentials.env.example](credentials.env.example) explains how to tell an agent wallet from the
