@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: LicenseRef-hyperliquid-cpp
-// Copyright (c) 2026 Denis Tishkov <denis8825@ya.ru>. All rights reserved. See LICENSE.
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Denis Tishkov <denis8825@ya.ru>
 #include "hl/core/Log.h"
 
 #include <atomic>

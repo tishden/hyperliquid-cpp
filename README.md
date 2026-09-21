@@ -232,8 +232,7 @@ looks like: [docs/RUNNING.md §4](docs/RUNNING.md#4-acceptance-run-against-a-liv
 | [docs/SIGNING.md](docs/SIGNING.md) | Exact Hyperliquid L1-action signing specification with worked vectors; precomputed-nonce ECDSA |
 | [docs/TESTNET.md](docs/TESTNET.md) | Testnet account, API wallet, running and reading the demo |
 | [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Benchmark results and how to reproduce them |
-| [docs/COMPARISON.md](docs/COMPARISON.md) | Side-by-side with the free open-source C++ SDK: what each one is, where it is ahead and where this one is |
-| [docs/LICENSING.md](docs/LICENSING.md) | The licence in plain language: what you may and may not do, warranties, FAQ, pre-signature checklist |
+| [docs/COMPARISON.md](docs/COMPARISON.md) | Side-by-side with the other open-source C++ SDK: what each one is, where it is ahead and where this one is |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
 
 Doxygen HTML: `scripts/docs.sh`.
@@ -242,7 +241,7 @@ Doxygen HTML: `scripts/docs.sh`.
 
 ```cmake
 include(FetchContent)
-FetchContent_Declare(hyperliquid_cpp GIT_REPOSITORY <your-licensed-repo-url> GIT_TAG v1.4.1)
+FetchContent_Declare(hyperliquid_cpp GIT_REPOSITORY https://github.com/tishden/hyperliquid-cpp.git GIT_TAG v1.5.0)
 FetchContent_MakeAvailable(hyperliquid_cpp)      # or: add_subdirectory(third_party/hyperliquid-cpp)
 target_link_libraries(my_bot PRIVATE hyperliquid::hyperliquid)
 ```
@@ -267,16 +266,15 @@ scripts/             build.sh, test.sh, bench.sh, docs.sh, ci.sh, check-docs.py
 
 ## Licence
 
-A perpetual, worldwide, **non-exclusive source-code licence**: use it commercially, modify it, and ship it
-inside your own products in compiled form, with no seat count and no royalty. You may not resell it, publish
-the source, distribute it as a connector or SDK, or patent what it embodies. The licensor warrants the code's
-provenance — its own code, no hidden copyleft, no back doors — and indemnifies against third-party IP claims,
-while keeping the right to license, resell or open-source the library to others.
+[Apache License 2.0](LICENSE): use it commercially, modify it, ship it in open or closed products. Keep the
+copyright and [NOTICE](NOTICE) in what you distribute. Third-party components and their licences are listed in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-Full terms: [LICENSE](LICENSE) (English) · [LICENSE.ru](LICENSE.ru) (Russian, equal force — the parties sign
-one of them) · plain-language explanation and FAQ: [docs/LICENSING.md](docs/LICENSING.md) · third-party
-components: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+## Contributing
+
+Bug reports, venue quirks and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Security
+issues go through [SECURITY.md](SECURITY.md), not public issues.
 
 ---
 
-© 2026 Denis Tishkov <denis8825@ya.ru>. hyperliquid-cpp is licensed, not sold — see [LICENSE](LICENSE).
+© 2026 Denis Tishkov <denis8825@ya.ru>. Licensed under the [Apache License 2.0](LICENSE).

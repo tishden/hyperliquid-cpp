@@ -1,9 +1,9 @@
-# SPDX-License-Identifier: LicenseRef-hyperliquid-cpp
-# Copyright (c) 2026 Denis Tishkov <denis8825@ya.ru>. All rights reserved. See LICENSE.
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Denis Tishkov <denis8825@ya.ru>
 cmake_minimum_required(VERSION 3.21)
 
 project(hyperliquid-cpp
-    VERSION 1.4.1
+    VERSION 1.5.0
     DESCRIPTION "Low-latency C++ connector for Hyperliquid: market data, order management, EIP-712 signing"
     LANGUAGES CXX C)
 
@@ -112,3 +112,4 @@ include(GNUInstallDirs)
 install(TARGETS hyperliquid ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(FILES $<TARGET_FILE:secp256k1> $<TARGET_FILE:simdjson> DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(DIRECTORY include/hl DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(FILES LICENSE NOTICE THIRD_PARTY_NOTICES.md DESTINATION ${CMAKE_INSTALL_DOCDIR})

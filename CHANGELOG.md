@@ -3,6 +3,23 @@
 All notable changes to this project are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## [1.5.0] — 2026-09-21
+
+### Changed
+- **Open source under the Apache License 2.0.** `LICENSE` is now the standard Apache-2.0 text and
+  every source file carries `SPDX-License-Identifier: Apache-2.0`. The source-code licence agreement,
+  its Russian version `LICENSE.ru` and `docs/LICENSING.md` are gone; copies licensed under them before
+  this release keep their terms.
+- `docs/COMPARISON.md` compares two open-source libraries: the price row and the commercial-terms
+  section are removed.
+
+### Added
+- `NOTICE`, installed together with `LICENSE` and `THIRD_PARTY_NOTICES.md` by `cmake --install` and
+  shipped in the runtime Docker image.
+- `CONTRIBUTING.md`, `SECURITY.md` and a GitHub Actions workflow that runs the build, the test suite
+  under GCC and under Clang with ASan+UBSan, and the repository checks.
+- `scripts/ci.sh` fails when a source file lacks the SPDX licence header.
+
 ## [1.4.1] — 2026-09-20
 
 ### Fixed
@@ -265,4 +282,4 @@ the official Python SDK and the live venue.
 
 ---
 
-© 2026 Denis Tishkov <denis8825@ya.ru>. hyperliquid-cpp is licensed, not sold — see [LICENSE](LICENSE).
+© 2026 Denis Tishkov <denis8825@ya.ru>. Licensed under the [Apache License 2.0](LICENSE).

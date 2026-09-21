@@ -1,12 +1,12 @@
-<!-- SPDX-License-Identifier: LicenseRef-hyperliquid-cpp -->
-<!-- Copyright (c) 2026 Denis Tishkov <denis8825@ya.ru>. All rights reserved. See LICENSE. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- Copyright 2026 Denis Tishkov <denis8825@ya.ru> -->
 
 # How this compares to the open-source C++ SDK
 
-A free, MIT-licensed C++ SDK for Hyperliquid exists —
+Another open-source C++ SDK for Hyperliquid exists, MIT-licensed —
 [TuxedoFish/hyperliquid-sdk-cpp](https://github.com/TuxedoFish/hyperliquid-sdk-cpp) — and it is a
 competent project with wider endpoint coverage than this library. Anyone evaluating this one will
-find it, so here is the comparison, including where the free one wins.
+find it, so here is the comparison, including where that one wins.
 
 - [1. They are different kinds of thing](#1-they-are-different-kinds-of-thing)
 - [2. Where the open SDK is ahead](#2-where-the-open-sdk-is-ahead)
@@ -40,7 +40,6 @@ write yourself".
 | `/exchange` actions | **41 of 68** documented | 9 typed (+ `submitAction` for the rest) |
 | WebSocket channels | **24 of 24**, including `fastAssetCtxs` with zlib decompression | 14 typed (+ `subscribeRaw`); `fastAssetCtxs` not supported |
 | Endpoints this one does not type at all | TWAP, staking, vaults, borrow/lend, deployment, prediction markets, HIP-3 | — |
-| Price | **free** | not free |
 
 If you need one of those endpoints, the open SDK has it today and this one does not. Both derive
 their signing test vectors from the official `hyperliquid-python-sdk`, and both parse with simdjson.
@@ -105,13 +104,12 @@ not discover it in production; the signing specification with worked vectors. Th
 makes the library workable for an LLM assistant — it can answer from the documentation instead of
 guessing.
 
-### Commercial terms
+### Tracks a fast-moving venue
 
-MIT gives you no warranty and nobody to ask. This library comes with a clean-provenance warranty, an
-IP indemnity, a named counterparty and the option to buy maintenance — which matters for a venue
-that changes as fast as Hyperliquid does. In one week of work on this library the venue's `l2Book`
-publish rate turned out to be ten times slower than previously documented, a `fast` book variant
-appeared, and unified accounts changed what the balance field means.
+Hyperliquid changes quickly. In one week of work on this library the venue's `l2Book` publish rate turned
+out to be ten times slower than previously documented, a `fast` book variant appeared, and unified accounts
+changed what the balance field means. Each of those is recorded in [CHANGELOG.md](../CHANGELOG.md) together
+with the test that pins it down.
 
 ## 4. How this comparison was made
 
@@ -126,4 +124,4 @@ It is a moving target — re-check before relying on any row above.
 
 ---
 
-© 2026 Denis Tishkov <denis8825@ya.ru>. hyperliquid-cpp is licensed, not sold — see [LICENSE](../LICENSE).
+© 2026 Denis Tishkov <denis8825@ya.ru>. Licensed under the [Apache License 2.0](../LICENSE).

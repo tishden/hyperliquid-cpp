@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: LicenseRef-hyperliquid-cpp
-# Copyright (c) 2026 Denis Tishkov <denis8825@ya.ru>. All rights reserved. See LICENSE.
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Denis Tishkov <denis8825@ya.ru>
 #
-# Everything that must be green before a release or a delivery, in one command.
+# Everything that must be green before a release, in one command.
 #
 #   scripts/ci.sh              # the default matrix: release, debug, asan, tsan + doc and secret checks
 #   scripts/ci.sh --quick      # release only, for a fast pre-commit loop
@@ -136,6 +136,17 @@ while IFS= read -r f; do
     fi
 done < <(git ls-files)
 record "$leaks" "no secrets in tracked files"
+
+# ── every source file carries the licence header ──────────────────────────────────────────────
+stage "licence headers"
+missing=0
+while IFS= read -r f; do
+    if ! head -5 "$f" | grep -q 'SPDX-License-Identifier: Apache-2.0'; then
+        echo "  no SPDX header in $f"
+        missing=1
+    fi
+done < <(git ls-files '*.h' '*.cpp' '*.sh' '*.py' 'CMakeLists.txt' '*.cmake' 'Dockerfile')
+record "$missing" "licence headers"
 
 # ── version and changelog agree ─────────────────────────────────────────────────────────────────
 stage "version consistency"

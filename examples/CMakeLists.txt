@@ -1,5 +1,5 @@
-# SPDX-License-Identifier: LicenseRef-hyperliquid-cpp
-# Copyright (c) 2026 Denis Tishkov <denis8825@ya.ru>. All rights reserved. See LICENSE.
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Denis Tishkov <denis8825@ya.ru>
 add_library(hl_example_strategy STATIC testnet_quoter/QuoteEngine.cpp)
 target_include_directories(hl_example_strategy PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(hl_example_strategy PUBLIC hyperliquid)

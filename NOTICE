@@ -1,0 +1,7 @@
+hyperliquid-cpp
+Copyright 2026 Denis Tishkov <denis8825@ya.ru>
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+It links third-party components under their own licences; see
+THIRD_PARTY_NOTICES.md for the list, versions and licences.

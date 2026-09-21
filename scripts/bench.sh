@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: LicenseRef-hyperliquid-cpp
-# Copyright (c) 2026 Denis Tishkov <denis8825@ya.ru>. All rights reserved. See LICENSE.
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Denis Tishkov <denis8825@ya.ru>
 # Build the release preset and run the benchmark suite pinned to one core.
 #   scripts/bench.sh [cpu core, default 2] [extra google-benchmark args...]
 set -euo pipefail

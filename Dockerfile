@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
-# SPDX-License-Identifier: LicenseRef-hyperliquid-cpp
-# Copyright (c) 2026 Denis Tishkov <denis8825@ya.ru>. All rights reserved. See LICENSE.
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Denis Tishkov <denis8825@ya.ru>
 #
 # Multi-stage image for hyperliquid-cpp.
 #
@@ -46,6 +46,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 10001 trader
 COPY --from=build /opt/hyperliquid-cpp/bin/ /usr/local/bin/
+COPY --from=build /src/LICENSE /src/NOTICE /src/THIRD_PARTY_NOTICES.md /usr/share/doc/hyperliquid-cpp/
 # test/benchmark fixtures at the path compiled into hl_tests / hl_benchmarks
 COPY --from=build /src/tests/fixtures /src/tests/fixtures
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt

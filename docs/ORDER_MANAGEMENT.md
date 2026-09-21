@@ -472,4 +472,4 @@ TLS encryption, kernel, network, and the venue's block time (~0.2 s) — is outs
 
 ---
 
-© 2026 Denis Tishkov <denis8825@ya.ru>. hyperliquid-cpp is licensed, not sold — see [LICENSE](../LICENSE).
+© 2026 Denis Tishkov <denis8825@ya.ru>. Licensed under the [Apache License 2.0](../LICENSE).

@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Denis Tishkov <denis8825@ya.ru>
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gcc release
+            cxx: g++
+            flags: -DCMAKE_BUILD_TYPE=Release
+          - name: clang asan+ubsan
+            cxx: clang++
+            flags: -DCMAKE_BUILD_TYPE=Debug -DHL_SANITIZE=ON -DHL_BUILD_BENCHMARKS=OFF
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build libssl-dev libgtest-dev libbenchmark-dev
+      - name: Cache fetched dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-${{ matrix.cxx }}-${{ hashFiles('cmake/Dependencies.cmake') }}
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} -DHL_BUILD_TESTS=ON ${{ matrix.flags }}
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+      - name: Test
+        run: ctest --test-dir build -j4 --output-on-failure
+
+  checks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Documentation links
+        run: python3 scripts/check-docs.py
+      - name: Licence headers
+        run: |
+          missing=0
+          while IFS= read -r f; do
+            head -5 "$f" | grep -q 'SPDX-License-Identifier: Apache-2.0' || { echo "no SPDX header in $f"; missing=1; }
+          done < <(git ls-files '*.h' '*.cpp' '*.sh' '*.py' 'CMakeLists.txt' '*.cmake' 'Dockerfile')
+          exit $missing
+      - name: Version matches changelog
+        run: |
+          ver=$(grep -oE 'kVersionString = "[0-9.]+"' include/hl/Version.h | grep -oE '[0-9.]+')
+          grep -q "## \[$ver\]" CHANGELOG.md

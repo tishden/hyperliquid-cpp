@@ -1,240 +1,202 @@
-HYPERLIQUID-CPP SOURCE CODE LICENCE
-Version 1.1 — 2026-09-19
 
-Copyright (c) 2026 Denis Tishkov <denis8825@ya.ru>. All rights reserved.
-
-The Licensor is Denis Tishkov, who owns this library and supplied it. The Licensee
-is the person or company that received it. The Order is the invoice, order form
-or written agreement between them; where the Order says something different
-from this Licence, the Order wins.
-
-The Software means everything delivered: source code, build files, tests,
-benchmarks, examples and documentation.
-
-The Software is licensed, not sold. The Licensor stays its owner. By using the
-Software, the Licensee accepts this Licence.
-
-
-1. WHAT THE LICENSEE MAY DO
-
-Once the Order is paid, the Licensee gets a permanent, worldwide,
-non-exclusive licence to:
-
-1.1 use, build, run and test the Software for any of its own business
-    purposes, including commercial use and trading for its own account;
-
-1.2 change the Software and build anything on top of it, without any duty to
-    publish those changes or show them to anyone;
-
-1.3 include the Software and its changes in the Licensee's own products and
-    services, and sell, deploy or host them — provided the Software ships
-    compiled, not as source;
-
-1.4 run the Software behind a service used by third parties, provided no third
-    party receives the source;
-
-1.5 make as many copies as it needs for backup, testing and archives.
-
-There is no limit on developers, machines, processes, accounts or venues, and
-no royalty on trading results or on product revenue.
-
-In this Licence, "compiled" means a form from which the source cannot normally
-be recovered: a library, an executable, or a service exposing only its network
-interface.
-
-
-2. WHO MAY SEE THE SOURCE
-
-2.1 The Licensee may show the source to its employees, group companies,
-    contractors and advisers who need it for the purposes above, provided they
-    are bound by confidentiality. The Licensee answers for what they do with
-    it.
-
-2.2 The Licensee may disclose the source when the law, a court or a regulator
-    requires it, telling the Licensor first if it lawfully can.
-
-2.3 If the Licensee is acquired, the licence passes to the buyer of the
-    business, provided the Licensor is told in writing within 30 days. Any
-    other transfer needs the Licensor's written consent, which will not be
-    refused without good reason.
-
-
-3. WHAT THE LICENSEE MAY NOT DO
-
-3.1 Sell, resell, rent, lend, sublicense or hand the Software, or anything
-    derived from it, to a third party.
-
-3.2 Publish the source, or make it available to a third party in source form:
-    no public or shared repository, package registry, container image
-    containing the source, article, talk, forum or paste site, and no dataset
-    used to train a model.
-
-3.3 Supply the Software, or anything derived from it, as an exchange
-    connector, trading SDK, API client library or developer toolkit for others
-    — whether paid or free. Products whose main purpose is something else, such
-    as a trading system or an execution service, are fine.
-
-3.4 Patent the Software, anything derived from it, or any algorithm or
-    technique it embodies; or use patents against the Licensor or against
-    other users of the Software over it.
-
-3.5 Remove or change the copyright and licence notices, or present the
-    Software as its own work.
-
-3.6 Use the Licensor's name or trademarks without written consent, other than
-    stating the fact that it licenses the Software.
-
-Nothing here touches the Licensee's own work. Strategies, models, data and code
-that merely call this library stay entirely the Licensee's, and the Licensee may
-patent its own inventions as long as they do not cover the Software.
-
-
-4. WHAT THE LICENSOR KEEPS
-
-4.1 The Licensor keeps ownership and every right not granted above.
-
-4.2 The licence is non-exclusive. The Licensor may sell, license, distribute or
-    publish the Software to anyone else at any time, on any terms, including
-    releasing it publicly as open source, without notice.
-
-4.3 If the Licensor later publishes the Software, the Licensee keeps every
-    right it has in the copy it received. From that moment the restrictions in
-    clauses 3.1–3.3 and the confidentiality duty in clause 6 stop applying to
-    whatever the Licensor made public — but they continue for everything that
-    is not public, including the Licensee's own changes.
-
-4.4 The Licensor may freely use feedback and bug reports the Licensee sends.
-    That gives the Licensor no rights over the Licensee's own code, strategies
-    or data.
-
-
-5. WHAT THE LICENSOR PROMISES
-
-5.1 Clean provenance. The Licensor warrants that:
-
-    (a) it owns the Software or otherwise has the right to license it;
-    (b) apart from the third-party components listed in
-        THIRD_PARTY_NOTICES.md, the Software was written by or for the
-        Licensor and contains no third-party code;
-    (c) as far as the Licensor knows, the Software infringes nobody's
-        copyright, trade secrets or other intellectual property;
-    (d) the Software contains no undisclosed copyleft code — nothing in it can
-        oblige the Licensee to publish the source of the Software, of its
-        changes, or of its own products;
-    (e) the Software contains no back door, time bomb or licence check, and
-        sends nobody the Licensee's keys, orders or trading data.
-
-5.2 Defence against IP claims. If a third party claims the Software as
-    delivered infringes its intellectual property, the Licensor will defend the
-    Licensee and pay the damages and costs finally awarded or agreed, provided
-    the Licensee tells the Licensor promptly, lets the Licensor run the defence
-    and settlement, and helps where reasonably needed. The Licensor may instead
-    obtain the right to keep using the Software, replace or change it, or end
-    this Licence and refund a fair part of the fees. This does not cover claims
-    caused by the Licensee's own changes, by combining the Software with other
-    software, by use against this Licence, or by the third-party components
-    below. Clause 7 caps the amounts.
-
-5.3 Third-party components. The Software links third-party components that the
-    Licensor does not own, all under permissive licences and listed with their
-    versions in THIRD_PARTY_NOTICES.md. The promises in clause 5.1 do not cover
-    them: the Licensor warrants only that the list is accurate and that, as far
-    as it knows, those licences allow this use. When the Licensee ships a
-    product, it must meet their attribution requirements.
-
-5.4 Everything else is "as is". Apart from clauses 5.1–5.3, the Licensor gives
-    no warranties, express or implied. Trading digital assets can lose money.
-    The Licensor does not promise any trading result, any latency on the
-    Licensee's hardware, that the Hyperliquid API will not change, or anything
-    about how the venue behaves. Benchmark figures in the documentation
-    describe the machine named there.
-
-5.5 No advice. The Software is a technical tool. Nothing in it or in its
-    documentation is investment, legal, tax or regulatory advice. The Licensee
-    alone is responsible for the lawfulness of its trading, for its risk
-    controls, and for any licence or authorisation it needs.
-
-
-6. CONFIDENTIALITY
-
-The source is the Licensor's confidential information. The Licensee will look
-after it at least as carefully as its own confidential material and will not
-disclose it beyond clause 2. This does not apply to anything that becomes
-public without the Licensee's fault — including publication by the Licensor —
-that the Licensee already knew, or that it develops independently. The duty
-outlasts this Licence for as long as the information stays confidential.
-
-
-7. LIABILITY
-
-7.1 Nothing here limits liability that the law does not allow to be limited,
-    such as liability for fraud or deliberate wrongdoing.
-
-7.2 Otherwise, each party's total liability under this Licence is limited to
-    the fees the Licensee paid under the Order during the twelve months before
-    the event.
-
-7.3 Neither party is liable for indirect or consequential loss, lost profit,
-    trading losses, lost opportunity or lost data.
-
-7.4 The Licensee alone is responsible for running the Software: key custody,
-    order and risk limits, monitoring, and the orders it sends.
-
-
-8. DELIVERY AND SUPPORT
-
-The Licensor delivers the Software once, as agreed in the Order. Support,
-maintenance and updates are not included unless the Order says so; if they are,
-later versions come under this same Licence. The Licensee keeps its own copy
-and runs its own build and deployment.
-
-
-9. DURATION AND TERMINATION
-
-9.1 This Licence starts on delivery and lasts indefinitely.
-
-9.2 The Licensor may end it if the Licensee seriously breaks clause 3 or clause
-    6 and does not fix the breach within 30 days of written notice, or at once
-    if the breach cannot be fixed.
-
-9.3 After termination the Licensee stops using the Software and deletes its
-    copies of the source, except copies it must keep by law or that sit in
-    ordinary backups. Products already shipped in compiled form may keep
-    working for their users.
-
-9.4 Clauses 3.4, 4, 5.3, 5.4, 6, 7, 9.3 and 10 survive termination.
-
-
-10. GENERAL
-
-10.1 Governing law and forum. This Licence is governed by the law of the
-     country where the Licensor is established, and disputes go to the courts
-     of that country, unless the Order agrees otherwise.
-
-10.2 Sanctions and export control. Both parties will obey applicable export and
-     sanctions rules. The Licensee will not make the Software available where
-     that is prohibited.
-
-10.3 Whole agreement. This Licence and the Order are the whole agreement
-     between the parties on this subject. Changes must be written and signed by
-     both.
-
-10.4 Severability. If part of this Licence cannot be enforced, the rest stays
-     in force and that part is read as narrowly as needed to work.
-
-10.5 No waiver. Not enforcing a term once does not give it up.
-
-10.6 Language. This Licence exists in English (this file) and in Russian
-     (LICENSE.ru). The parties sign or accept one of them, and the version they
-     signed or accepted is the one that governs.
-
-Without a paid Order, the Licensee may only evaluate the Software for thirty
-days on non-production systems.
-
-A plain-language explanation and an FAQ are in docs/LICENSING.md. That
-explanation is not part of this Licence.
-
-
-Licensor: ______________________   Licensee: ______________________
-
-Date: _________________________   Date: _________________________
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
+
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
+
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
+
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
+
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
+
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
+
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
+
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
+
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
+
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
+
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
+
+   END OF TERMS AND CONDITIONS
+
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright [yyyy] [name of copyright owner]
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.

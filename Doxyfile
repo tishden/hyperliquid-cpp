@@ -1,5 +1,5 @@
 PROJECT_NAME           = "hyperliquid-cpp"
-PROJECT_NUMBER         = 1.4.1
+PROJECT_NUMBER         = 1.5.0
 PROJECT_BRIEF          = "Low-latency C++20 connector for Hyperliquid"
 OUTPUT_DIRECTORY       = build/docs
 INPUT                  = include/hl README.md docs

@@ -14,9 +14,9 @@ configure time (or taken from the system) and are **not** modified.
 Keccak-256, MessagePack, EIP-712, WebSocket (RFC 6455) and HTTP/1.1 are
 implemented in this code base; no additional code is vendored.
 
-The licensor's clean-provenance warranty in [LICENSE](LICENSE) clause 6.1 covers the licensor's own code and
-does not extend to the components above; clause 6.3 covers what is warranted about them, and a licensee that
-redistributes a compiled product carries their attribution requirements.
+hyperliquid-cpp itself is licensed under the Apache License 2.0 ([LICENSE](LICENSE), [NOTICE](NOTICE)).
+Anyone redistributing a product built with it also carries the attribution requirements of the components
+above.
 
 The golden test vectors in `tests/signer_test.cpp` and `tests/actions_test.cpp`
 were produced with the official `hyperliquid-python-sdk` (MIT). Test fixtures in
@@ -24,4 +24,4 @@ were produced with the official `hyperliquid-python-sdk` (MIT). Test fixtures in
 
 ---
 
-© 2026 Denis Tishkov <denis8825@ya.ru>. hyperliquid-cpp is licensed, not sold — see [LICENSE](LICENSE).
+© 2026 Denis Tishkov <denis8825@ya.ru>. Licensed under the [Apache License 2.0](LICENSE).

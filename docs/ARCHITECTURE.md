@@ -272,4 +272,4 @@ All tests also run under AddressSanitizer + UndefinedBehaviorSanitizer (`scripts
 
 ---
 
-© 2026 Denis Tishkov <denis8825@ya.ru>. hyperliquid-cpp is licensed, not sold — see [LICENSE](../LICENSE).
+© 2026 Denis Tishkov <denis8825@ya.ru>. Licensed under the [Apache License 2.0](../LICENSE).

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: LicenseRef-hyperliquid-cpp
-# Copyright (c) 2026 Denis Tishkov <denis8825@ya.ru>. All rights reserved. See LICENSE.
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Denis Tishkov <denis8825@ya.ru>
 """Check every relative link and heading anchor in the Markdown documentation.
 
 Catches the two ways documentation rots as it is edited: a file that was renamed or removed, and
@@ -28,7 +28,8 @@ def slug(heading: str) -> str:
 def main() -> int:
     root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
     os.chdir(root)
-    files = sorted(glob.glob("docs/*.md")) + ["README.md", "CHANGELOG.md", "THIRD_PARTY_NOTICES.md"]
+    files = sorted(glob.glob("docs/*.md")) + ["README.md", "CHANGELOG.md", "THIRD_PARTY_NOTICES.md",
+                                           "CONTRIBUTING.md", "SECURITY.md"]
     files = [f for f in files if os.path.exists(f)]
 
     anchors = {}
