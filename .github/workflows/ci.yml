@@ -2,10 +2,13 @@
 # Copyright 2026 Denis Tishkov <denis8825@ya.ru>
 name: ci
 
+# Disabled for now: runs only when started by hand (Actions → ci → Run workflow).
+# To enable on every push and pull request, add:
+#   push:
+#     branches: [main]
+#   pull_request:
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read

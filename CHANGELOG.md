@@ -19,7 +19,8 @@ All notable changes to this project are documented here. The project follows
 - README section "Status and warranty": a research project, tested and benchmarked, provided as is with
   no commitment to fix bugs or vulnerabilities or to develop it further.
 - `CONTRIBUTING.md`, `SECURITY.md` and a GitHub Actions workflow that runs the build, the test suite
-  under GCC and under Clang with ASan+UBSan, and the repository checks.
+  under GCC and under Clang with ASan+UBSan, and the repository checks. It is disabled for now and runs
+  only when started by hand.
 - `scripts/ci.sh` fails when a source file lacks the SPDX licence header.
 
 ## [1.4.1] — 2026-09-20

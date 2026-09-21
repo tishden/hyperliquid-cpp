@@ -25,7 +25,7 @@ issues — see [SECURITY.md](SECURITY.md).
 1. Build and test: `scripts/build.sh release && scripts/test.sh release`.
 2. Before opening the PR run `scripts/ci.sh` — compilers, sanitizers, documentation links, the
    secret scan, licence headers and version/changelog consistency. Toolchains your machine lacks are
-   skipped; the GitHub workflow runs the rest.
+   skipped.
 3. A fix comes with a test that fails without it. A behaviour change updates `docs/API.md` and, where
    it applies, `docs/ORDER_MANAGEMENT.md` or `docs/COVERAGE.md`.
 4. Add a line under an `## [Unreleased]` section in [CHANGELOG.md](CHANGELOG.md).
